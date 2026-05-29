@@ -1,4 +1,4 @@
-import argparse, yaml, logging, sys, subprocess
+import argparse, yaml, logging, sys, subprocess, os
 from pathlib import Path
 from utils import next_path, strip_split, tilps
 from copy import deepcopy
@@ -8,7 +8,8 @@ logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 logger = logging.getLogger('LammpsUtils')
 
 # define environment variable so LAMMPS can find potentials without needing a valid relative path
-subprocess.run(['export', f'LAMMPS_POTENTIALS={Path(__file__).parent.parent / 'potentials'}'])
+os.environ['LAMMPS_POTENTIALS'] = (Path(__file__).parent.parent / 'potentials').as_posix()
+logger.debug(f'Defined LAMMPS_POTENTIALS environment variable')
 
 def main():
     # load input file
@@ -23,6 +24,11 @@ def main():
     with open(input_fp, 'r') as f:
         input_params: dict = yaml.safe_load(f)
     logger.debug(f'Loaded input file {input_fp}')
+
+    # initialize a study
+    study_type = input_params['study']['type']
+    study: Study = study_registry[study_type](input_params)
+    logger.debug(f'Initialized study type {study_type}')
 
 class Study:
     def __init__(self, input_yml: dict[str, dict]):
@@ -68,6 +74,7 @@ class MeanSquareDisplacement(Study):
             subdir = self.dir / f'{sim_id}K'
             subdir.mkdir()
             self.state[sim_id]['dir'] = subdir
+        logger.debug(f'Built directory tree at {self.dir}')
 
         # define input files
         equil_order = ['system', 'potential', 'equil']
@@ -78,16 +85,18 @@ class MeanSquareDisplacement(Study):
                 content_strs=[self.sim_params[key] for key in equil_order],
                 write_restart=self.state[sim_id]['dir'] / 'equil.restart'
             )
-            equil_file.update_temp(2000)
+            equil_file.update_temp(float(sim_id))
             self.state[sim_id]['equil_file'] = equil_file
+            logger.debug(f'Defined equilibriation input file for temperature {sim_id}')
 
             # msd
             msd_file = LammpsFile(
                 content_strs=[self.sim_params[key] for key in msd_order],
                 read_restart=self.state[sim_id]['dir'] / 'equil.restart'
             )
-            msd_file.update_temp(2000)
+            msd_file.update_temp(float(sim_id))
             self.state[sim_id]['msd_file'] = msd_file
+            logger.debug(f'Defined MSD input file for temperature {sim_id}')
 
     def run_lammps(self):
         for sim_id in self.sim_ids:
