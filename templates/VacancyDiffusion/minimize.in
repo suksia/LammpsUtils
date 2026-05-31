@@ -1,3 +1,5 @@
+neigh_modify delay 0 check yes
+
 label loop
 
 variable tstep_idx loop ?num_snapshots?
