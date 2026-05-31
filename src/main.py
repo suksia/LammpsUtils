@@ -207,7 +207,7 @@ class VacancyDiffusion(Study):
                     vac_pos = frame.attributes['VacancyPosition']
 
                     if len(vac_pos) > 1:
-                        raise Warning(f'[timestep={t_step}] More than 1 vacancy detected! Quenching failed.')
+                        logger.debug(f'WARNING: More than 1 vacancy detected for timestep={t_step}! Quenching failed.')
                     vac_pos = vac_pos[0]
 
                     # determine if a hop occured and unwrap coordinates if a boundary was crossed
@@ -247,7 +247,7 @@ class VacancyDiffusion(Study):
                     msd.append(float(np.mean(sq_dis[:, col])))      
             else:
                 msd = sq_dis.tolist()
-                raise Warning('Ensemble consists of only 1 member. Do not trust the MSD!')
+                logger.debug('WARNING: Ensemble consists of only 1 member. Do not trust the MSD!')
             
             logger.debug(f'Writing MSD data to a file...')
 
