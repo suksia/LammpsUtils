@@ -230,10 +230,8 @@ class VacancyDiffusion(Study):
                             # number of times already crossed this boundary
                             num_crosses[i] += int(cross_dir)
                             
-                            # update coord
-                            unwrapped_vac_pos[i] = vac_pos[i] + num_crosses[i]*box_width[i]
-                        else:  
-                            unwrapped_vac_pos[i] = vac_pos[i]
+                        # update coord
+                        unwrapped_vac_pos[i] = vac_pos[i] + num_crosses[i]*box_width[i]
 
                     current_t = t_step*float(self.input_yml['timestep'])/1000
                     sq_dis_val = float(np.linalg.norm(unwrapped_vac_pos - ref_vac_pos)**2)
@@ -242,6 +240,27 @@ class VacancyDiffusion(Study):
 
                     with open(sim_dir / 'unwrapped.txt', 'a') as unw:
                         unw.write(f'{current_t}\t {vac_pos}\t {num_crosses}\t {unwrapped_vac_pos}\t {sq_dis_val:.3f}\n')
+                    
+                    # create dumps file with vacancy trajectory
+                    trj_header_lines = [
+                        'ITEM: TIMESTEP\n',
+                        f'{t_step}\n'
+                        'ITEM: NUMBER OF ATOMS\n',
+                        '1\n'
+                        'ITEM: BOX BOUNDS pp pp pp\n',
+                        f'0.0 {box_width[0]}\n',
+                        f'0.0 {box_width[1]}\n',
+                        f'0.0 {box_width[2]}\n',
+                        'ITEM: ATOMS id type x y z\n',
+                    ]   
+
+                    with open(sim_dir / 'vac_trj.dump', 'a') as trj:
+                        trj.writelines(trj_header_lines)
+                        trj.write(f'1 1 {vac_pos[0]} {vac_pos[1]} {vac_pos[2]}\n')
+
+                    with open(sim_dir / 'vac_trj_unw.dump', 'a') as trj:
+                        trj.writelines(trj_header_lines)
+                        trj.write(f'1 1 {unwrapped_vac_pos[0]} {unwrapped_vac_pos[1]} {unwrapped_vac_pos[2]}\n')
 
                     prev_vac_pos = vac_pos
                 
