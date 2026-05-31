@@ -134,6 +134,9 @@ class VacancyDiffusion(Study):
                 seeds.add(random.randint(0, 100000))
             seeds = list(seeds)
 
+            with open(sim_dir / 'progress.log', 'w') as prog:
+                prog.write('member  num_jumps')
+
             sq_dis = None
             for member in range(self.input_yml['members']):
                 # write input files
@@ -206,7 +209,7 @@ class VacancyDiffusion(Study):
 
                     # determine if a hop occured and unwrap coordinates if a boundary was crossed
                     dr = vac_pos - prev_vac_pos
-                    if np.linalg.norm(dr[i]) > 0.1:
+                    if np.linalg.norm(dr) > 0.1:
                         num_jumps += 1
 
                     for i in range(3):
@@ -224,14 +227,14 @@ class VacancyDiffusion(Study):
 
                     prev_vac_pos = vac_pos
                 
-                logger.debug(f'Vacancy jumped {num_jumps} time for T={temp} and member={member}. Writing info...')
-                with open(sim_dir / 'jumps.log', 'a') as vh:
-                    vh.write(member, num_jumps)
+                logger.debug(f'Vacancy jumped {num_jumps} times for T={temp} and member={member}. Writing info...')
+                with open(sim_dir / 'progress.log', 'a') as prog:
+                    prog.write(f'{member}\{num_jumps}')
                 
                 if sq_dis is None:
                     sq_dis = np.array(current_sq_dis)
                 else:
-                    sq_dis = np.vstack(sq_dis, current_sq_dis)
+                    sq_dis = np.vstack((sq_dis, current_sq_dis))
 
             # compute mean square displacement
             logger.debug(f'Computing mean squared displacement...')
