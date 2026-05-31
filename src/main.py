@@ -135,7 +135,7 @@ class VacancyDiffusion(Study):
             seeds = list(seeds)
 
             with open(sim_dir / 'progress.log', 'w') as prog:
-                prog.write('member  num_jumps')
+                prog.write('member  num_jumps\n')
 
             sq_dis = None
             for member in range(self.input_yml['members']):
@@ -222,14 +222,14 @@ class VacancyDiffusion(Study):
                                 vac_pos[i] += box_width[i]
                                 logger.debug(f'Vacancy crossed high boundary in dimension {i+1}. Unwrapping coord {old_vac_pos} -> {vac_pos}')
 
-                    t.append(current_sq_dis.append(t_step*float(self.input_yml['timestep'])/1000))
+                    t.append(t_step*float(self.input_yml['timestep'])/1000)
                     current_sq_dis.append(float(np.linalg.norm(vac_pos - ref_vac_pos)**2))
 
                     prev_vac_pos = vac_pos
                 
                 logger.debug(f'Vacancy jumped {num_jumps} times for T={temp} and member={member}. Writing info...')
                 with open(sim_dir / 'progress.log', 'a') as prog:
-                    prog.write(f'{member}\{num_jumps}')
+                    prog.write(f'{member}\t\t{num_jumps}\n')
                 
                 if sq_dis is None:
                     sq_dis = np.array(current_sq_dis)
@@ -264,10 +264,12 @@ class VacancyDiffusion(Study):
         logger.debug(f'Plotting MSD comparison by temperature')
         for temp in self.sim_ids:
             plt.plot(t, self.state[temp]['msd'], label=f'{temp}K')
-            plt.xlabel('Time [ns]')
-            plt.ylabel('Mean Squared Displacement')
-            plt.savefig(self.dir / 'msd_by_T.png')
-            plt.close()
+
+        plt.legend()
+        plt.xlabel('Time [ns]')
+        plt.ylabel('Mean Squared Displacement')
+        plt.savefig(self.dir / 'msd_by_T.png')
+        plt.close()
     
     logger.debug('Done.')
 
