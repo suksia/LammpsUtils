@@ -170,19 +170,24 @@ class VacancyDiffusion(Study):
             # compute square displacement as a function of time
             frames = [frame for frame in pipeline.frames]
             t, msd = [0], [0.0]
-            ref_vac_pos = frames[1]
+            ref_vac_pos = frames[1].attributes['VacancyPosition']
 
             for frame in frames[2:]:
                 t_step =  frame.attributes['Timestep']
                 vac_pos = frame.attributes['VacancyPosition']
+                
                 if len(vac_pos) > 1:
-                    raise Warning('More than 1 vacancy detected! Quenching failed.')
+                    raise Warning(f'[timestep={t_step}] More than 1 vacancy detected! Quenching failed.')
                 vac_pos = vac_pos[0]
+                
+                t.append(t_step*float(self.input_yml['timestep'])/1000)
                 msd.append(np.linalg.norm(vac_pos - ref_vac_pos)**2)
 
             # plot and save the square displacement for a single microstate
             plt.plot(t, msd)
             plt.savefig(sim_dir / 'msd.png')
+            plt.xlabel('Time [ns]')
+            plt.ylabel('Squared Displacement')
             plt.title(sim_dir)
             plt.close()
 
@@ -214,7 +219,7 @@ class LammpsInput(LammpsFile):
     def write_to_file(self, write_path: Path):
         with open(write_path, 'w') as d:
             for l in self.lines:
-                d.write(l+'\n')
+                d.write(l)
         self.last_write_path = deepcopy(write_path)
         logger.debug(f'{self.__class__.__name__}: wrote lines to {write_path}')
 
