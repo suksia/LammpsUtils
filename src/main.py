@@ -196,12 +196,16 @@ class VacancyDiffusion(Study):
 
                 # compute square displacement as a function of time
                 frames = [frame for frame in pipeline.frames]
-                t, current_sq_dis, num_jumps = [0], [0.0], 0
+                t, current_sq_dis, num_jumps, num_crosses = [0], [0.0], 0, [0, 0, 0]
                 ref_vac_pos = frames[1].attributes['VacancyPosition'][0]
 
                 box_width = [self.input_yml['lattice_const']*size for size in self.input_yml['size']]
                 dr_tol = 0.80*min(box_width)
                 prev_vac_pos = copy(ref_vac_pos)
+
+                with open('unwrapped.txt', 'w') as unw:
+                    unw.write('Time\t Current Pos\t Number of crosses\t Unwrapped Pos\t Squared Disp\n')
+
                 for frame in frames[2:]:
                     t_step =  frame.attributes['Timestep']
                     vac_pos = frame.attributes['VacancyPosition']
@@ -215,18 +219,34 @@ class VacancyDiffusion(Study):
                     if np.linalg.norm(dr) > 0.1:
                         num_jumps += 1
 
+                    # unwrap each coord
+                    unwrapped_vac_pos = np.array([0.0, 0.0, 0.0])
                     for i in range(3):
-                        if np.linalg.norm(dr[i]) > dr_tol:
-                            old_vac_pos = vac_pos
-                            if dr[i] > 0:
-                                vac_pos[i] -= box_width[i]
-                                logger.debug(f'Vacancy crossed low boundary in dimension {i+1}. Unwrapping coord {old_vac_pos} -> {vac_pos}')
-                            elif dr[i] < 0:
-                                vac_pos[i] += box_width[i]
-                                logger.debug(f'Vacancy crossed high boundary in dimension {i+1}. Unwrapping coord {old_vac_pos} -> {vac_pos}')
+                        # crossed a box boundary
+                        if abs(dr[i]) > dr_tol:
+                            # direction of cross (+1 = high, -1 = low)
+                            cross_dir = -np.sign(dr[i])
 
-                    t.append(t_step*float(self.input_yml['timestep'])/1000)
-                    current_sq_dis.append(float(np.linalg.norm(vac_pos - ref_vac_pos)**2))
+                            # number of times already crossed this boundary
+                            num_crosses[i] += cross_dir
+                            
+                            # update coord
+                            unwrapped_vac_pos[i] = vac_pos[i] + num_crosses[i]
+                        else:  
+                            unwrapped_vac_pos[i] = vac_pos[i]
+
+                        if dr[i] > 0:
+                            logger.debug(f'Vacancy crossed low boundary in dimension {i+1}. Unwrapping coord {vac_pos} -> {unwrapped_vac_pos}')
+                        elif dr[i] < 0:
+                            logger.debug(f'Vacancy crossed high boundary in dimension {i+1}. Unwrapping coord  {vac_pos} -> {unwrapped_vac_pos}')
+
+                    current_t = t_step*float(self.input_yml['timestep'])/1000
+                    sq_dis_val = float(np.linalg.norm(unwrapped_vac_pos - ref_vac_pos)**2)
+                    t.append(current_t)
+                    current_sq_dis.append(sq_dis_val)
+
+                    with open('unwrapped.txt', 'a') as unw:
+                        unw.write(f'{t}\t {vac_pos}\t {num_crosses[i]}\t {unwrapped_vac_pos}\t {sq_dis_val}\n')
 
                     prev_vac_pos = vac_pos
                 
