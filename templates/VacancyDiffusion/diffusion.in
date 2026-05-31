@@ -1,4 +1,6 @@
 log diffusion.log
+thermo_style custom step etotal temp
+thermo 1000000
 
 reset_timestep 0
 

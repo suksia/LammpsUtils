@@ -81,6 +81,9 @@ class VacancyDiffusion(Study):
 
     def init_state(self):
         self.sim_ids = self.input_yml['temperatures']
+        if type(self.sim_ids) != list:
+            self.sim_ids = [self.sim_ids]
+
         self.file_order = ['main.in', 'equil.in', 'diffusion.in', 'minimize.in']
 
         self.state = dict.fromkeys(self.sim_ids)
@@ -247,7 +250,7 @@ class VacancyDiffusion(Study):
                 raise Warning('Ensemble consists of only 1 member. Do not trust the MSD!')
             
             logger.debug(f'Writing MSD data to a file...')
-            
+
             with open(sim_dir / 'msd.txt', 'w') as msd_file:
                 msd_file.write(f'time[ns]\tmsd[A2]')
                 for i in range(len(t)):
