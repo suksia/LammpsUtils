@@ -150,8 +150,9 @@ class VacancyDiffusion(Study):
                 # run LAMMPS
                 lmp_out = open(sim_dir / 'lmp.out', 'w')
                 lammps_cmd = ['srun', '--export=ALL', 'lmp', '-in', self.file_order[0]]
-                logger.debug(f'Launching LAMMPS')
+                logger.debug(f'Launching LAMMPS for T={temp} and member={member}...')
                 subprocess.run(lammps_cmd, cwd=sim_dir, stdout=lmp_out, stderr=subprocess.STDOUT)
+                logger.debug(f'LAMMPS finished. Extracting vacancy positions...')
 
                 # plot the equilibriation curve
                 lmp_log = LammpsLog(sim_dir / 'equil.log')
@@ -190,7 +191,7 @@ class VacancyDiffusion(Study):
                 # compute square displacement as a function of time
                 frames = [frame for frame in pipeline.frames]
                 t, current_sq_dis, num_jumps = [0], [0.0], 0
-                ref_vac_pos = frames[1].attributes['VacancyPosition']
+                ref_vac_pos = frames[1].attributes['VacancyPosition'][0]
 
                 box_width = [self.input_yml['lattice_const']*size for size in self.input_yml['size']]
                 dr_tol = 0.80*min(box_width)
@@ -203,22 +204,27 @@ class VacancyDiffusion(Study):
                         raise Warning(f'[timestep={t_step}] More than 1 vacancy detected! Quenching failed.')
                     vac_pos = vac_pos[0]
 
-                    # unwrap coordinates
-                    dr = vac_pos - prev_vac_pos              
+                    # determine if a hop occured and unwrap coordinates if a boundary was crossed
+                    dr = vac_pos - prev_vac_pos
+                    if np.linalg.norm(dr[i]) > 0.1:
+                        num_jumps += 1
+
                     for i in range(3):
-                        if np.linalg.norm(dr[i]) > 0.1:
-                            num_jumps += 1
                         if np.linalg.norm(dr[i]) > dr_tol:
+                            old_vac_pos = vac_pos
                             if dr[i] > 0:
                                 vac_pos[i] -= box_width[i]
+                                logger.debug(f'Vacancy crossed low boundary in dimension {i+1}. Unwrapping coord {old_vac_pos} -> {vac_pos}')
                             elif dr[i] < 0:
                                 vac_pos[i] += box_width[i]
+                                logger.debug(f'Vacancy crossed high boundary in dimension {i+1}. Unwrapping coord {old_vac_pos} -> {vac_pos}')
 
                     t.append(current_sq_dis.append(t_step*float(self.input_yml['timestep'])/1000))
                     current_sq_dis.append(float(np.linalg.norm(vac_pos - ref_vac_pos)**2))
 
                     prev_vac_pos = vac_pos
                 
+                logger.debug(f'Vacancy jumped {num_jumps} time for T={temp} and member={member}. Writing info...')
                 with open(sim_dir / 'jumps.log', 'a') as vh:
                     vh.write(member, num_jumps)
                 
@@ -228,9 +234,12 @@ class VacancyDiffusion(Study):
                     sq_dis = np.vstack(sq_dis, current_sq_dis)
 
             # compute mean square displacement
+            logger.debug(f'Computing mean squared displacement...')
             msd = []
             for col in range(len(sq_dis[0, :])):
-                msd.append(float(sq_dis[:, col]))                  
+                msd.append(float(np.mean(sq_dis[:, col])))                  
+            
+            logger.debug(f'Plotting displacement curves...')
 
             # plot every square displacement curve
             for row in range(len(sq_dis[:, 0])):
@@ -249,12 +258,15 @@ class VacancyDiffusion(Study):
             self.state[temp]['msd'] = msd
         
         # compare msd for each temp
+        logger.debug(f'Plotting MSD comparison by temperature')
         for temp in self.sim_ids:
             plt.plot(t, self.state[temp]['msd'], label=f'{temp}K')
             plt.xlabel('Time [ns]')
             plt.ylabel('Mean Squared Displacement')
             plt.savefig(self.dir / 'msd_by_T.png')
             plt.close()
+    
+    logger.debug('Done.')
 
 class LammpsFile:
     def __init__(self):
