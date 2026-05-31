@@ -1,4 +1,4 @@
-import argparse, yaml, logging, sys, subprocess, os
+import argparse, yaml, logging, sys, subprocess, os, shutil
 from pathlib import Path
 from utils import *
 from copy import deepcopy
@@ -34,6 +34,16 @@ def main():
     study_type = input_params['type']
     study: Study = study_registry[study_type](input_params)
     logger.debug(f'Initialized study type {study_type}')
+
+    # build directory tree and copy in input file
+    study.build_directory()
+    logger.debug(f'Built directory tree at {study.dir}')
+    shutil.copy(input_fp, study.dir)
+
+    # run vasp
+    logger.debug(f'Starting LAMMPS simulations...')
+    study.run_lammps()
+
 
 class Study:
     def __init__(self, input_yml: dict[str, dict]):
@@ -85,7 +95,8 @@ class VacancyDiffusion(Study):
         file_params['equil'] = unprefix(file_params['equil'])
         file_params['vac_equil'] = unprefix(file_params['vac_equil'])
         file_params['diffusion'] = unprefix(file_params['diffusion'])
-        file_params['10k'] = unprefix(file_params['10k'])
+        file_params['snapshot'] = unprefix(file_params['snapshot'])
+        file_params['num_snapshots'] = int(file_params['diffusion'] / file_params['snapshot'])
 
         # loop through temperatures and load+update each input files
         for temp in self.sim_ids:
@@ -211,12 +222,15 @@ class LammpsInput(LammpsFile):
 
         # loop through each string in each line and replace ?param with params[param]
         for i, line in enumerate(self.lines):
-            for j, s in enumerate(strip_split(line)):
+            line = strip_split(line)
+            if type(line) == str:
+                line = [line]
+            for j, s in enumerate(line):
                 if s[0] == '?':
                     p = s[1:]
                     assert p in params.keys(), f'LammpsInput: parameter {p} not a key in params dictionary'
                     line[j] = params[p]
-            self.lines[i] = line
+            self.lines[i] = tilps(line)
 
 class LammpsLog:
     def __init__(self, file_path: Path):

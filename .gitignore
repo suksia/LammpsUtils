@@ -1,3 +1,4 @@
 env/
 test/
 potentials/*
+src/__pycache__/
