@@ -236,17 +236,31 @@ class VacancyDiffusion(Study):
                 else:
                     sq_dis = np.vstack((sq_dis, current_sq_dis))
 
-            # compute mean square displacement
-            logger.debug(f'Computing mean squared displacement...')
+            # compute mean square 
+            logger.debug(f'Computing mean squared displacement')
             msd = []
-            for col in range(len(sq_dis[0, :])):
-                msd.append(float(np.mean(sq_dis[:, col])))                  
+            if self.input_yml['members'] > 1:              
+                for col in range(len(sq_dis[0, :])):
+                    msd.append(float(np.mean(sq_dis[:, col])))      
+            else:
+                msd = sq_dis.tolist()
+                raise Warning('Ensemble consists of only 1 member. Do not trust the MSD!')
+            
+            logger.debug(f'Writing MSD data to a file...')
+            
+            with open(sim_dir / 'msd.txt', 'w') as msd_file:
+                msd_file.write(f'time[ns]\tmsd[A2]')
+                for i in range(len(t)):
+                    msd_file.write(f'{t[i]}\t{msd[i]}')
             
             logger.debug(f'Plotting displacement curves...')
 
             # plot every square displacement curve
-            for row in range(len(sq_dis[:, 0])):
-                plt.plot(t, sq_dis[row, :])
+            if self.input_yml['members'] > 1:
+                for row in range(len(sq_dis[:, 0])):
+                    plt.plot(t, sq_dis[row, :])
+            else:
+                plt.plot(t, sq_dis)
             
             plt.savefig(sim_dir / 'all_msd.png')
             plt.close()
