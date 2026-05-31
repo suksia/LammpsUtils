@@ -106,7 +106,6 @@ class VacancyDiffusion(Study):
         for temp in self.sim_ids:
             file_params['temp'] = temp
 
-            input_files = {}
             for fn in self.file_order:
                 # load input file lines
                 in_file = LammpsInput(file_path = PKG_DIR / 'templates' / self.__class__.__name__ / fn)
@@ -153,6 +152,10 @@ class VacancyDiffusion(Study):
                 lammps_cmd = ['srun', '--export=ALL', 'lmp', '-in', self.file_order[0]]
                 logger.debug(f'Launching LAMMPS')
                 subprocess.run(lammps_cmd, cwd=sim_dir, stdout=lmp_out, stderr=subprocess.STDOUT)
+
+                # plot the equilibriation curve
+                lmp_log = LammpsLog(sim_dir / 'equil.log')
+                lmp_log.plot_values()
 
                 # obtain vacancy positions using Wigner-Seitz cell analysis on quenched snapshots
                 pipeline = import_file(sim_dir / 'minimize.dump')
