@@ -11,6 +11,7 @@ import re
 # basic logger
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 logger = logging.getLogger('LammpsUtils')
+logging.getLogger("matplotlib").setLevel(logging.FATAL)
 
 # define environment variable so LAMMPS can find potentials without needing a valid relative path
 PKG_DIR = Path(__file__).parent.parent
@@ -83,7 +84,7 @@ class VacancyDiffusion(Study):
         self.sim_ids = self.input_yml['temperatures']
         self.file_order = ['main.in', 'equil.in', 'diffusion.in', 'minimize.in']
 
-        self.state = dict.fromkeys(self.sim_ids, {})
+        self.state = dict.fromkeys(self.sim_ids)
         self.state.update({'input_files': {}})
 
         # add/modify some parameters that are implicit
@@ -103,14 +104,17 @@ class VacancyDiffusion(Study):
         for temp in self.sim_ids:
             file_params['temp'] = temp
 
+            input_files = {}
             for fn in self.file_order:
                 # load input file lines
                 in_file = LammpsInput(file_path = PKG_DIR / 'templates' / self.__class__.__name__ / fn)
                 in_file.add_params(file_params)
 
-                # save file lines
-                self.state['input_files'].update({fn: in_file})
+                # save file objects
+                input_files[fn] = input_files
             
+            # add input files to temp
+            self.state[temp] = {'input_files': input_files}
             logger.debug(f'Defined input files for temperature {temp}')
 
     def build_directory(self):
@@ -121,14 +125,12 @@ class VacancyDiffusion(Study):
             subdir.mkdir()
             self.state[temp].update({'dir' : subdir})
 
-        logger.debug(f'Built directory tree at {self.dir}')
-
     def run_lammps(self):
         for temp in self.sim_ids:
             sim_dir = self.state[temp]['dir']
 
             # write input files
-            for fn, lmpfile in self.state['input_files'].items():
+            for fn, lmpfile in self.state[temp]['input_files'].items():
                 lmpfile.write_to_file(sim_dir / fn)
             
             # run LAMMPS
@@ -175,7 +177,7 @@ class VacancyDiffusion(Study):
             for frame in frames[2:]:
                 t_step =  frame.attributes['Timestep']
                 vac_pos = frame.attributes['VacancyPosition']
-                
+
                 if len(vac_pos) > 1:
                     raise Warning(f'[timestep={t_step}] More than 1 vacancy detected! Quenching failed.')
                 vac_pos = vac_pos[0]
@@ -185,10 +187,10 @@ class VacancyDiffusion(Study):
 
             # plot and save the square displacement for a single microstate
             plt.plot(t, msd)
-            plt.savefig(sim_dir / 'msd.png')
             plt.xlabel('Time [ns]')
             plt.ylabel('Squared Displacement')
             plt.title(sim_dir)
+            plt.savefig(sim_dir / 'msd.png')
             plt.close()
 
 class LammpsFile:
