@@ -252,9 +252,9 @@ class VacancyDiffusion(Study):
             logger.debug(f'Writing MSD data to a file...')
 
             with open(sim_dir / 'msd.txt', 'w') as msd_file:
-                msd_file.write(f'time[ns]\tmsd[A2]')
+                msd_file.write(f'time[ns]\t msd[A2]\n')
                 for i in range(len(t)):
-                    msd_file.write(f'{t[i]}\t{msd[i]}')
+                    msd_file.write(f'{t[i]}\t {msd[i]}\n')
             
             logger.debug(f'Plotting displacement curves...')
 
