@@ -1,12 +1,11 @@
-import argparse, yaml, logging, sys, subprocess, os, shutil
+import argparse, yaml, logging, sys, subprocess, os, shutil, re, random
 from pathlib import Path
 from utils import *
-from copy import deepcopy
+from copy import copy, deepcopy
 import matplotlib.pyplot as plt
 from ovito.modifiers import WignerSeitzAnalysisModifier
 from ovito.io import import_file, export_file
 import numpy as np
-import re
 
 # basic logger
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
@@ -130,68 +129,128 @@ class VacancyDiffusion(Study):
         for temp in self.sim_ids:
             sim_dir = self.state[temp]['dir']
 
-            # write input files
-            for fn, lmpfile in self.state[temp]['input_files'].items():
-                lmpfile.write_to_file(sim_dir / fn)
-            
-            # run LAMMPS
-            lmp_out = open(sim_dir / 'lmp.out', 'w')
-            lammps_cmd = ['srun', '--export=ALL', 'lmp', '-in', self.file_order[0]]
-            logger.debug(f'Launching LAMMPS')
-            subprocess.run(lammps_cmd, cwd=sim_dir, stdout=lmp_out, stderr=subprocess.STDOUT)
+            # define seeds for velocity initial conditions
+            seeds = set()
+            while len(seeds) < self.input_yml['members']:
+                seeds.add(random.randint(0, 100000))
+            seeds = list(seeds)
 
-            # obtain vacancy positions using Wigner-Seitz cell analysis on quenched snapshots
-            pipeline = import_file(sim_dir / 'minimize.dump')
-
-            # outputs sites as particles DataCollection with "Occupancy" property
-            ws = WignerSeitzAnalysisModifier()
-            pipeline.modifiers.append(ws)
-
-            # custom modifier to obtain a vacancy position for each snapshot
-            def modify(frame, data):
-                # per-site occupancy (0 = vacancy, 1 = normal site, 2 = interstitial)
-                occupancies = data.particles['Occupancy']
-
-                # add a boolean "Selection" property which will be 1 for sites with a vacancy
-                selection = data.particles_.create_property('Selection')
-                selection[...] = occupancies == 0
-
-                # add a data attribute for the current frame which is the vacancy position
-                vacancy_idx = np.nonzero(selection)
-                data.attributes['VacancyCount'] = np.sum(selection)
-                data.attributes['VacancyPosition'] = data.particles.positions[vacancy_idx]
-
-            # write vacancy positions
-            pipeline.modifiers.append(modify)
-            export_file(
-                pipeline, 
-                sim_dir / 'vacancies.txt', 
-                'txt/attr',
-                columns = ['Timestep', 'VacancyCount', 'VacancyPosition'],
-                multiple_frames = True)
-
-            # compute square displacement as a function of time
-            frames = [frame for frame in pipeline.frames]
-            t, msd = [0], [0.0]
-            ref_vac_pos = frames[1].attributes['VacancyPosition']
-
-            for frame in frames[2:]:
-                t_step =  frame.attributes['Timestep']
-                vac_pos = frame.attributes['VacancyPosition']
-
-                if len(vac_pos) > 1:
-                    raise Warning(f'[timestep={t_step}] More than 1 vacancy detected! Quenching failed.')
-                vac_pos = vac_pos[0]
+            sq_dis = None
+            for member in range(self.input_yml['members']):
+                # write input files
+                for fn, lmpfile in self.state[temp]['input_files'].items():
+                    # update seed in velocity initialization
+                    for i, line in enumerate(lmpfile.lines):
+                        if 'velocity' in line:
+                            vel_line = strip_split(line)
+                            vel_line[-1] = seeds[member]
+                            lmpfile.lines[i] = tilps(vel_line)
+                    
+                    lmpfile.write_to_file(sim_dir / fn)
                 
-                t.append(t_step*float(self.input_yml['timestep'])/1000)
-                msd.append(np.linalg.norm(vac_pos - ref_vac_pos)**2)
+                # run LAMMPS
+                lmp_out = open(sim_dir / 'lmp.out', 'w')
+                lammps_cmd = ['srun', '--export=ALL', 'lmp', '-in', self.file_order[0]]
+                logger.debug(f'Launching LAMMPS')
+                subprocess.run(lammps_cmd, cwd=sim_dir, stdout=lmp_out, stderr=subprocess.STDOUT)
 
-            # plot and save the square displacement for a single microstate
+                # obtain vacancy positions using Wigner-Seitz cell analysis on quenched snapshots
+                pipeline = import_file(sim_dir / 'minimize.dump')
+
+                # outputs sites as particles DataCollection with "Occupancy" property
+                ws = WignerSeitzAnalysisModifier()
+                pipeline.modifiers.append(ws)
+
+                # custom modifier to obtain a vacancy position for each snapshot
+                def modify(frame, data):
+                    # per-site occupancy (0 = vacancy, 1 = normal site, 2 = interstitial)
+                    occupancies = data.particles['Occupancy']
+
+                    # add a boolean "Selection" property which will be 1 for sites with a vacancy
+                    selection = data.particles_.create_property('Selection')
+                    selection[...] = occupancies == 0
+
+                    # add a data attribute for the current frame which is the vacancy position
+                    vacancy_idx = np.nonzero(selection)
+                    data.attributes['VacancyCount'] = np.sum(selection)
+                    data.attributes['VacancyPosition'] = data.particles.positions[vacancy_idx]
+
+                # write vacancy positions
+                pipeline.modifiers.append(modify)
+                export_file(
+                    pipeline, 
+                    sim_dir / 'vacancies.txt', 
+                    'txt/attr',
+                    columns = ['Timestep', 'VacancyCount', 'VacancyPosition'],
+                    multiple_frames = True)
+
+                # compute square displacement as a function of time
+                frames = [frame for frame in pipeline.frames]
+                t, current_sq_dis, num_jumps = [0], [0.0], 0
+                ref_vac_pos = frames[1].attributes['VacancyPosition']
+
+                box_width = [self.input_yml['lattice_const']*size for size in self.input_yml['size']]
+                dr_tol = 0.80*min(box_width)
+                prev_vac_pos = copy(ref_vac_pos)
+                for frame in frames[2:]:
+                    t_step =  frame.attributes['Timestep']
+                    vac_pos = frame.attributes['VacancyPosition']
+
+                    if len(vac_pos) > 1:
+                        raise Warning(f'[timestep={t_step}] More than 1 vacancy detected! Quenching failed.')
+                    vac_pos = vac_pos[0]
+
+                    # unwrap coordinates
+                    dr = vac_pos - prev_vac_pos              
+                    for i in range(3):
+                        if np.linalg.norm(dr[i]) > 0.1:
+                            num_jumps += 1
+                        if np.linalg.norm(dr[i]) > dr_tol:
+                            if dr[i] > 0:
+                                vac_pos[i] -= box_width[i]
+                            elif dr[i] < 0:
+                                vac_pos[i] += box_width[i]
+
+                    t.append(current_sq_dis.append(t_step*float(self.input_yml['timestep'])/1000))
+                    current_sq_dis.append(float(np.linalg.norm(vac_pos - ref_vac_pos)**2))
+
+                    prev_vac_pos = vac_pos
+                
+                with open(sim_dir / 'jumps.log', 'a') as vh:
+                    vh.write(member, num_jumps)
+                
+                if sq_dis is None:
+                    sq_dis = np.array(current_sq_dis)
+                else:
+                    sq_dis = np.vstack(sq_dis, current_sq_dis)
+
+            # compute mean square displacement
+            msd = []
+            for col in range(len(sq_dis[0, :])):
+                msd.append(float(sq_dis[:, col]))                  
+
+            # plot every square displacement curve
+            for row in range(len(sq_dis[:, 0])):
+                plt.plot(t, sq_dis[row, :])
+            
+            plt.savefig(sim_dir / 'all_msd.png')
+            plt.close()
+
+            # plot msd
             plt.plot(t, msd)
             plt.xlabel('Time [ns]')
-            plt.ylabel('Squared Displacement')
-            plt.title(sim_dir)
+            plt.ylabel('Mean Squared Displacement')
             plt.savefig(sim_dir / 'msd.png')
+            plt.close()
+
+            self.state[temp]['msd'] = msd
+        
+        # compare msd for each temp
+        for temp in self.sim_ids:
+            plt.plot(t, self.state[temp]['msd'], label=f'{temp}K')
+            plt.xlabel('Time [ns]')
+            plt.ylabel('Mean Squared Displacement')
+            plt.savefig(self.dir / 'msd_by_T.png')
             plt.close()
 
 class LammpsFile:
