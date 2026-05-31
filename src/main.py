@@ -203,7 +203,7 @@ class VacancyDiffusion(Study):
                 dr_tol = 0.80*min(box_width)
                 prev_vac_pos = copy(ref_vac_pos)
 
-                with open('unwrapped.txt', 'w') as unw:
+                with open(sim_dir / 'unwrapped.txt', 'w') as unw:
                     unw.write('Time\t Current Pos\t Number of crosses\t Unwrapped Pos\t Squared Disp\n')
 
                 for frame in frames[2:]:
@@ -245,8 +245,8 @@ class VacancyDiffusion(Study):
                     t.append(current_t)
                     current_sq_dis.append(sq_dis_val)
 
-                    with open('unwrapped.txt', 'a') as unw:
-                        unw.write(f'{t}\t {vac_pos}\t {num_crosses[i]}\t {unwrapped_vac_pos}\t {sq_dis_val}\n')
+                    with open(sim_dir / 'unwrapped.txt', 'a') as unw:
+                        unw.write(f'{current_t}\t {vac_pos}\t {num_crosses[i]}\t {unwrapped_vac_pos}\t {sq_dis_val}\n')
 
                     prev_vac_pos = vac_pos
                 
