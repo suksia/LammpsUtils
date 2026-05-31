@@ -231,7 +231,7 @@ class LammpsInput(LammpsFile):
                 # replace with the actual param val
                 p = line[start:stop]
                 assert p in params.keys(), f'LammpsInput: parameter {p} not a key in params dictionary'
-                line = re.sub(f'\?{p}\?', params[p], line)
+                line = re.sub(f'\?{p}\?', str(params[p]), line)
 
             # update line
             self.lines[i] = line
