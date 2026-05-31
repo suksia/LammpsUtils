@@ -318,14 +318,16 @@ class LammpsLog:
         start, stop = [], []
         for i, line in enumerate(self.lines):
             line = strip_split(line)
-            if line[0] == 'Per':
+            if len(line) == 0:
+                continue
+            elif line[0] == 'Per':
                 start.append(i+1)
             elif line[0] == 'Loop':
                 stop.append(i-1)
 
         # determine name of each column in thermo data (shouldn't change within the same log file)
         data_labels = None
-        for i in range(len(start)):
+        for i in start:
             new_data_labels = strip_split(self.lines[i])
             if data_labels is None:
                 data_labels = new_data_labels
@@ -334,9 +336,12 @@ class LammpsLog:
                     f'Thermo data labels changed between runs for log file at {self.path}'
         
         # load the data as one contiguous list
-        self.data: dict[str, list] = dict.fromkeys(data_labels, [])
+        self.data: dict[str, list] = dict.fromkeys(data_labels)
+        for key in self.data.keys():
+            self.data[key] = []
+
         for i in range(len(start)):
-            for line in self.lines[start[i+1]:stop[i]]:
+            for line in self.lines[start[i]+1:stop[i]]:
                 line = strip_split(line)
                 for j, val in enumerate(line):
                     self.data[data_labels[j]].append(float(val))
@@ -347,8 +352,8 @@ class LammpsLog:
         except:
             raise KeyError(f'`Step` must be one of the data labels for log file at {self.path}')
         
-        y_labels = list(self.data.keys)
-        y_labels.pop('Step')
+        y_labels = list(self.data.keys())
+        y_labels.pop(y_labels.index('Step'))
 
         for y_lab in y_labels:
             plt.plot(x, self.data[y_lab])
