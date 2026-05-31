@@ -2,9 +2,9 @@ log diffusion.log
 
 reset_timestep 0
 
-dump 1 all custom ?snapshot diffusion.dump id type x y z
+dump 1 all custom ?snapshot? diffusion.dump id type x y z
 
-run ?diffusion
+run ?diffusion?
  
 unfix 1
 unfix 2

@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from ovito.modifiers import WignerSeitzAnalysisModifier
 from ovito.io import import_file, export_file
 import numpy as np
+import re
 
 # basic logger
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
@@ -220,17 +221,20 @@ class LammpsInput(LammpsFile):
     def add_params(self, params: dict):
         params = deepcopy(params)
 
-        # loop through each string in each line and replace ?param with params[param]
+        # loop through each string in each line and replace ?param? with params[param]
         for i, line in enumerate(self.lines):
-            line = strip_split(line)
-            if type(line) == str:
-                line = [line]
-            for j, s in enumerate(line):
-                if s[0] == '?':
-                    p = s[1:]
-                    assert p in params.keys(), f'LammpsInput: parameter {p} not a key in params dictionary'
-                    line[j] = params[p]
-            self.lines[i] = tilps(line)
+            while '?' in line:
+                # pairs of indices corresponding to the starting ? and stopping ? for ?param?
+                p_idcs = [j for j, c in enumerate(line) if c == '?']
+                start, stop = p_idcs[0]+1, p_idcs[1]
+
+                # replace with the actual param val
+                p = line[start:stop]
+                assert p in params.keys(), f'LammpsInput: parameter {p} not a key in params dictionary'
+                line = re.sub(f'\?{p}\?', params[p], line)
+
+            # update line
+            self.lines[i] = line
 
 class LammpsLog:
     def __init__(self, file_path: Path):

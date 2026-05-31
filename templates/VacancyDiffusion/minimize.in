@@ -1,7 +1,7 @@
 label loop
 
-variable tstep_idx loop ?num_snapshots
-variable tstep equal ${tstep_idx}*?snapshot
+variable tstep_idx loop ?num_snapshots?
+variable tstep equal ${tstep_idx}*?snapshot?
 
 read_dump diffusion.dump ${tstep} x y z replace yes
 
