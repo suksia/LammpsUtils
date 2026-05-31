@@ -1,0 +1,22 @@
+log equil.log
+thermo_style custom step etotal temp
+thermo 1000
+
+timestep ?timestep
+velocity all create ?temp 123
+
+fix 1 all nvt temp ?temp ?temp
+fix 2 all momentum 100 linear 1 1 1
+
+run ?equil
+
+variable cx equal $(xhi)/2
+variable cy equal $(yhi)/2
+variable cz equal $(zhi)/2
+
+region center sphere ${cx} ${cy} ${cz} 0.5 units box
+group vac region center 
+delete_atoms group vac
+group vac delete
+
+run ?vac_equil

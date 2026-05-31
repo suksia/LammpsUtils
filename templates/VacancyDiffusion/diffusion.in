@@ -1,0 +1,11 @@
+log diffusion.log
+
+reset_timestep 0
+
+dump 1 all custom ?dump_freq diffusion.dump id type x y z
+
+run ?diffusion
+ 
+unfix 1
+unfix 2
+undump 1

@@ -1,0 +1,20 @@
+units metal
+atom_style atomic
+boundary p  p  p
+
+lattice ?lattice ?lattice_const
+region lat block 0 ?size_x 0 ?size_y 0 ?size_z
+create_box 1 lat
+create_atoms 1 box
+
+pair_style ?pair_style
+pair_coeff * * ?potential ?element
+
+neighbor ?skin bin
+neigh_modify delay 10
+
+write_dump all custom minimize.dump id type x y z
+
+include equil.in
+include diffusion.in
+include minimize.in

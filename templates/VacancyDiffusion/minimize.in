@@ -1,0 +1,17 @@
+label loop
+
+variable tstep_idx loop ?num_snapshots
+variable tstep equal ${tstep_idx}*?snapshot
+
+read_dump diffusion.dump ${tstep} x y z replace yes
+
+reset_timestep 0
+
+minimize 1e-10 1e-10 1000 100000
+
+reset_timestep ${tstep}
+write_dump all custom minimize.dump id type x y z modify append yes
+
+next tstep_idx
+
+jump SELF loop

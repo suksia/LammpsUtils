@@ -30,3 +30,12 @@ def next_path(path: Path):
         else:
             return new_path
     raise ValueError(f'[{path}] Study file path index limit reached (1000)')
+
+def unprefix(int_prefix: str) -> int:
+    val, prefix = int(int_prefix[:-1]), int_prefix[-1]
+    if prefix == 'k':
+        return val*1000
+    elif prefix == 'M':
+        return val*1000000
+    else:
+        return int(int_prefix)

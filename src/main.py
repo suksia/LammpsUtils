@@ -1,14 +1,19 @@
 import argparse, yaml, logging, sys, subprocess, os
 from pathlib import Path
-from utils import next_path, strip_split, tilps
+from utils import *
 from copy import deepcopy
+import matplotlib.pyplot as plt
+from ovito.modifiers import WignerSeitzAnalysisModifier
+from ovito.io import import_file, export_file
+import numpy as np
 
 # basic logger
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 logger = logging.getLogger('LammpsUtils')
 
 # define environment variable so LAMMPS can find potentials without needing a valid relative path
-os.environ['LAMMPS_POTENTIALS'] = (Path(__file__).parent.parent / 'potentials').as_posix()
+PKG_DIR = Path(__file__).parent.parent
+os.environ['LAMMPS_POTENTIALS'] = (PKG_DIR / 'potentials').as_posix()
 logger.debug(f'Defined LAMMPS_POTENTIALS environment variable')
 
 def main():
@@ -26,24 +31,13 @@ def main():
     logger.debug(f'Loaded input file {input_fp}')
 
     # initialize a study
-    study_type = input_params['study']['type']
+    study_type = input_params['type']
     study: Study = study_registry[study_type](input_params)
     logger.debug(f'Initialized study type {study_type}')
 
 class Study:
     def __init__(self, input_yml: dict[str, dict]):
-        self.input_yml = input_yml
-        self.params = input_yml['study']
-        self.sim_params = input_yml['simulations']
-        self.parent_dir = Path(input_yml['study']['dir'])
-        self.dir = None
-
-        self.name = self.params['name']
-        logger.debug(f'Starting study: {self.name}')
-
-        self.state, self.sim_ids, self.skip_sim_ids = {}, [], []
-        logger.debug(f'Initializing state...')
-        self.init_state()
+        pass
 
     def init_state(self):
         pass
@@ -61,109 +55,218 @@ def register_study(cls):
     return cls
 
 @register_study
-class MeanSquareDisplacement(Study):
-    def init_state(self):
-        self.sim_ids = self.params['temperatures']
-        self.state = dict.fromkeys(self.sim_ids, {})
+class VacancyDiffusion(Study):
+    def __init__(self, input_yml: dict[str, dict]):
+        self.input_yml = input_yml
+        self.dir = next_path(Path(input_yml['dir']) / 'vac_diffusion')
+        self.file_order = None
 
-        # build directory
-        self.dir = next_path(self.parent_dir / 'individual')
+        self.name = self.input_yml['name']
+        logger.debug(f'Starting study: {self.name}')
+
+        self.state, self.sim_ids, self.skip_sim_ids = {}, [], []
+        logger.debug(f'Initializing state...')
+        self.init_state()
+
+    def init_state(self):
+        self.sim_ids = self.input_yml['temperatures']
+        self.file_order = ['main.in', 'equil.in', 'diffusion.in', 'minimize.in']
+
+        self.state = dict.fromkeys(self.sim_ids, {})
+        self.state.update({'input_files': {}})
+
+        # add/modify some parameters that are implicit
+        file_params = deepcopy(self.input_yml)
+
+        file_params['size_x'] = file_params['size'][0]
+        file_params['size_y'] = file_params['size'][1]
+        file_params['size_z'] = file_params['size'][2]
+
+        file_params['equil'] = unprefix(file_params['equil'])
+        file_params['vac_equil'] = unprefix(file_params['vac_equil'])
+        file_params['diffusion'] = unprefix(file_params['diffusion'])
+        file_params['10k'] = unprefix(file_params['10k'])
+
+        # loop through temperatures and load+update each input files
+        for temp in self.sim_ids:
+            file_params['temp'] = temp
+
+            for fn in self.file_order:
+                # load input file lines
+                in_file = LammpsInput(file_path = PKG_DIR / 'templates' / self.__class__.__name__ / fn)
+                in_file.add_params(file_params)
+
+                # save file lines
+                self.state['input_files'].update({fn: in_file})
+            
+            logger.debug(f'Defined input files for temperature {temp}')
+
+    def build_directory(self):
         self.dir.mkdir()
 
-        for sim_id in self.sim_ids:
-            subdir = self.dir / f'{sim_id}K'
+        for temp in self.sim_ids:
+            subdir = self.dir / f'{temp}K'
             subdir.mkdir()
-            self.state[sim_id]['dir'] = subdir
+            self.state[temp].update({'dir' : subdir})
+
         logger.debug(f'Built directory tree at {self.dir}')
 
-        # define input files
-        equil_order = ['system', 'potential', 'equil']
-        msd_order = ['potential', 'msd']
-        for sim_id in self.sim_ids:
-            # equilibriation 
-            equil_file = LammpsFile(
-                content_strs=[self.sim_params[key] for key in equil_order],
-                write_restart=self.state[sim_id]['dir'] / 'equil.restart'
-            )
-            equil_file.update_temp(float(sim_id))
-            self.state[sim_id]['equil_file'] = equil_file
-            logger.debug(f'Defined equilibriation input file for temperature {sim_id}')
-
-            # msd
-            msd_file = LammpsFile(
-                content_strs=[self.sim_params[key] for key in msd_order],
-                read_restart=self.state[sim_id]['dir'] / 'equil.restart'
-            )
-            msd_file.update_temp(float(sim_id))
-            self.state[sim_id]['msd_file'] = msd_file
-            logger.debug(f'Defined MSD input file for temperature {sim_id}')
-
     def run_lammps(self):
-        for sim_id in self.sim_ids:
-            # equilibriate
-            sim_dir = self.state[sim_id]['dir']
-            self.state[sim_id]['equil_file'].write_to_file(sim_dir / 'equil.in')
+        for temp in self.sim_ids:
+            sim_dir = self.state[temp]['dir']
 
-            equil_out = open(sim_dir / 'equil.out', 'w')
-            lammps_cmd = ['srun', '--export=ALL', 'lmp', '-in', 'equil.in']
+            # write input files
+            for fn, lmpfile in self.state['input_files'].items():
+                lmpfile.write_to_file(sim_dir / fn)
+            
+            # run LAMMPS
+            lmp_out = open(sim_dir / 'lmp.out', 'w')
+            lammps_cmd = ['srun', '--export=ALL', 'lmp', '-in', self.file_order[0]]
             logger.debug(f'Launching LAMMPS')
-            subprocess.run(lammps_cmd, cwd=sim_dir, stdout=equil_out, stderr=subprocess.STDOUT)
+            subprocess.run(lammps_cmd, cwd=sim_dir, stdout=lmp_out, stderr=subprocess.STDOUT)
 
-            # msd
-            self.state[sim_id]['msd_file'].write_to_file(sim_dir / 'msd.in')
+            # obtain vacancy positions using Wigner-Seitz cell analysis on quenched snapshots
+            pipeline = import_file(sim_dir / 'minimize.dump')
 
-            msd_out = open(sim_dir / 'msd.out', 'w')
-            lammps_cmd = ['srun', '--export=ALL', 'lmp', '-in', 'msd.in']
-            logger.debug(f'Launching LAMMPS')
-            subprocess.run(lammps_cmd, cwd=sim_dir, stdout=msd_out, stderr=subprocess.STDOUT)
+            # outputs sites as particles DataCollection with "Occupancy" property
+            ws = WignerSeitzAnalysisModifier()
+            pipeline.modifiers.append(ws)
+
+            # custom modifier to obtain a vacancy position for each snapshot
+            def modify(frame, data):
+                # per-site occupancy (0 = vacancy, 1 = normal site, 2 = interstitial)
+                occupancies = data.particles['Occupancy']
+
+                # add a boolean "Selection" property which will be 1 for sites with a vacancy
+                selection = data.particles_.create_property('Selection')
+                selection[...] = occupancies == 0
+
+                # add a data attribute for the current frame which is the vacancy position
+                vacancy_idx = np.nonzero(selection)
+                data.attributes['VacancyCount'] = np.sum(selection)
+                data.attributes['VacancyPosition'] = data.particles.positions[vacancy_idx]
+
+            # write vacancy positions
+            pipeline.modifiers.append(modify)
+            export_file(
+                pipeline, 
+                sim_dir / 'vacancies.txt', 
+                'txt/attr',
+                columns = ['Timestep', 'VacancyCount', 'VacancyPosition'],
+                multiple_frames = True)
+
+            # compute square displacement as a function of time
+            frames = [frame for frame in pipeline.frames]
+            t, msd = [0], [0.0]
+            ref_vac_pos = frames[1]
+
+            for frame in frames[2:]:
+                t_step =  frame.attributes['Timestep']
+                vac_pos = frame.attributes['VacancyPosition']
+                if len(vac_pos) > 1:
+                    raise Warning('More than 1 vacancy detected! Quenching failed.')
+                vac_pos = vac_pos[0]
+                msd.append(np.linalg.norm(vac_pos - ref_vac_pos)**2)
+
+            # plot and save the square displacement for a single microstate
+            plt.plot(t, msd)
+            plt.savefig(sim_dir / 'msd.png')
+            plt.title(sim_dir)
+            plt.close()
 
 class LammpsFile:
-    def __init__(self, file_path: Path = None, content_strs: list[str] = None, write_restart: Path = None, read_restart: Path = None):
+    def __init__(self):
+        pass
+
+class LammpsInput(LammpsFile):
+    def __init__(self, file_path: Path = None, content_str: str = None):
         self.lines = []
-        self.path = None
+        self.last_read_path = None
+        self.last_write_path = None
 
-        self.write_restart = write_restart
-        self.read_restart = read_restart
+        if file_path:
+            self.load_from_file(file_path)
+        elif content_str:
+            self.load_from_string(content_str)
+    
+    def load_from_file(self, read_path: Path):
+        with open(read_path, 'r') as f:
+            self.lines = f.readlines()
+        self.last_read_path = deepcopy(read_path)
+        logger.debug(f'{self.__class__.__name__}: read lines from {self.last_read_path}')
 
-        if content_strs:
-            self.load_from_strings(content_strs)
+    def load_from_string(self, contents_str: str):
+        for l in contents_str.split('\n'):
+            self.lines.append(l)
 
-    def load_from_strings(self, contents_strs: list[str]):
-        if self.read_restart:
-            self.lines.append(f'read_restart {self.read_restart}')
-            self.lines[-1] += '\n'
-
-        for s in contents_strs:
-            for l in s.split('\n'):
-                self.lines.append(l)
-            self.lines[-1] += '\n'
-        
-        if self.write_restart:
-            self.lines.append(f'write_restart {self.write_restart}')
-
-    def write_to_file(self, dest_path: Path, overwrite_path=False):
-        with open(dest_path, 'w') as d:
+    def write_to_file(self, write_path: Path):
+        with open(write_path, 'w') as d:
             for l in self.lines:
                 d.write(l+'\n')
-            logger.debug(f'{LammpsFile.__name__}: wrote lines to {dest_path}')
-        if overwrite_path:
-            self.path = dest_path
-            logger.debug(f'{LammpsFile.__name__}: updated current path to {dest_path}')
+        self.last_write_path = deepcopy(write_path)
+        logger.debug(f'{self.__class__.__name__}: wrote lines to {write_path}')
 
-    def update_temp(self, temp: float):
-        temp = f'{temp:.2f}'
+    def add_params(self, params: dict):
+        params = deepcopy(params)
+
+        # loop through each string in each line and replace ?param with params[param]
         for i, line in enumerate(self.lines):
-            line = strip_split(line)
-            if 'velocity' in line:
-                line[3] = temp
-            elif 'nvt' in line:
-                line[5] = temp
-                line[6] = temp
-            else:
-                continue
-            self.lines[i] = tilps(line)
+            for j, s in enumerate(strip_split(line)):
+                if s[0] == '?':
+                    p = s[1:]
+                    assert p in params.keys(), f'LammpsInput: parameter {p} not a key in params dictionary'
+                    line[j] = params[p]
+            self.lines[i] = line
 
 class LammpsLog:
-    pass
-    
+    def __init__(self, file_path: Path):
+        self.path = file_path
+        self.lines = []
+
+        with open(self.path, 'r') as log:
+            self.lines = log.readlines()
+        
+        # determine which lines correspond to thermo data
+        start, stop = [], []
+        for i, line in enumerate(self.lines):
+            line = strip_split(line)
+            if line[0] == 'Per':
+                start.append(i+1)
+            elif line[0] == 'Loop':
+                stop.append(i-1)
+
+        # determine name of each column in thermo data (shouldn't change within the same log file)
+        data_labels = None
+        for i in range(len(start)):
+            new_data_labels = strip_split(self.lines[i])
+            if data_labels is None:
+                data_labels = new_data_labels
+            else:
+                assert data_labels == new_data_labels, \
+                    f'Thermo data labels changed between runs for log file at {self.path}'
+        
+        # load the data as one contiguous list
+        self.data: dict[str, list] = dict.fromkeys(data_labels, [])
+        for i in range(len(start)):
+            for line in self.lines[start[i+1]:stop[i]]:
+                line = strip_split(line)
+                for j, val in enumerate(line):
+                    self.data[data_labels[j]].append(float(val))
+
+    def plot_values(self):
+        try:
+            x = self.data['Step']
+        except:
+            raise KeyError(f'`Step` must be one of the data labels for log file at {self.path}')
+        
+        y_labels = list(self.data.keys)
+        y_labels.pop('Step')
+
+        for y_lab in y_labels:
+            plt.plot(x, self.data[y_lab])
+            plt.xlabel('Timestep')
+            plt.ylabel(y_lab)
+            plt.savefig(self.path.parent / f'{y_lab}.png')
+            plt.close()
+
 main()
