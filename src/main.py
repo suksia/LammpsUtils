@@ -85,7 +85,10 @@ class VacancyDiffusion(Study):
         self.file_order = ['main.in', 'equil.in', 'diffusion.in', 'minimize.in']
 
         self.state = dict.fromkeys(self.sim_ids)
-        self.state.update({'input_files': {}})
+
+        # initialize each sim with a new dict (dict.fromkeys initializes them with the same value reference)
+        for key in self.state.keys():
+            self.state[key] = {'input_files': {}}
 
         # add/modify some parameters that are implicit
         file_params = deepcopy(self.input_yml)
@@ -111,10 +114,8 @@ class VacancyDiffusion(Study):
                 in_file.add_params(file_params)
 
                 # save file objects
-                input_files[fn] = input_files
+                self.state[temp]['input_files'][fn] = in_file
             
-            # add input files to temp
-            self.state[temp] = {'input_files': input_files}
             logger.debug(f'Defined input files for temperature {temp}')
 
     def build_directory(self):
