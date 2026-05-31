@@ -228,17 +228,12 @@ class VacancyDiffusion(Study):
                             cross_dir = -np.sign(dr[i])
 
                             # number of times already crossed this boundary
-                            num_crosses[i] += cross_dir
+                            num_crosses[i] += int(cross_dir)
                             
                             # update coord
-                            unwrapped_vac_pos[i] = vac_pos[i] + num_crosses[i]
+                            unwrapped_vac_pos[i] = vac_pos[i] + num_crosses[i]*box_width[i]
                         else:  
                             unwrapped_vac_pos[i] = vac_pos[i]
-
-                        if dr[i] > 0:
-                            logger.debug(f'Vacancy crossed low boundary in dimension {i+1}. Unwrapping coord {vac_pos} -> {unwrapped_vac_pos}')
-                        elif dr[i] < 0:
-                            logger.debug(f'Vacancy crossed high boundary in dimension {i+1}. Unwrapping coord  {vac_pos} -> {unwrapped_vac_pos}')
 
                     current_t = t_step*float(self.input_yml['timestep'])/1000
                     sq_dis_val = float(np.linalg.norm(unwrapped_vac_pos - ref_vac_pos)**2)
@@ -246,7 +241,7 @@ class VacancyDiffusion(Study):
                     current_sq_dis.append(sq_dis_val)
 
                     with open(sim_dir / 'unwrapped.txt', 'a') as unw:
-                        unw.write(f'{current_t}\t {vac_pos}\t {num_crosses[i]}\t {unwrapped_vac_pos}\t {sq_dis_val}\n')
+                        unw.write(f'{current_t}\t {vac_pos}\t {num_crosses}\t {unwrapped_vac_pos}\t {sq_dis_val:.3f}\n')
 
                     prev_vac_pos = vac_pos
                 
