@@ -1,0 +1,9 @@
+compute msdvar all msd
+
+log diffusion.log
+thermo_style custom step c_msdvar[*]
+thermo ?msd?
+
+reset_timestep 0
+
+run ?diffusion?

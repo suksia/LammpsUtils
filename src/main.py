@@ -66,7 +66,163 @@ def register_study(cls):
     return cls
 
 @register_study
-class VacancyDiffusion(Study):
+class Diffusion(Study):
+    def __init__(self, input_yml: dict[str, dict]):
+        self.input_yml = input_yml
+        self.dir = next_path(Path(input_yml['dir']) / 'diffusion')
+        self.file_order = None
+
+        self.name = self.input_yml['name']
+        logger.debug(f'Starting study: {self.name}')
+
+        self.state, self.sim_ids, self.skip_sim_ids = {}, [], []
+        logger.debug(f'Initializing state...')
+        self.init_state()
+    
+    def init_state(self):
+        self.sim_ids = self.input_yml['temperatures']
+        if type(self.sim_ids) != list:
+            self.sim_ids = [self.sim_ids]
+
+        self.file_order = ['main.in', 'equil.in', 'diffusion.in']
+
+        self.state = dict.fromkeys(self.sim_ids)
+
+        # initialize each sim with a new dict (dict.fromkeys initializes them with the same value reference)
+        for key in self.state.keys():
+            self.state[key] = {'input_files': {}}
+
+        # add/modify some parameters that are implicit
+        file_params = deepcopy(self.input_yml)
+
+        file_params['size_x'] = file_params['size'][0]
+        file_params['size_y'] = file_params['size'][1]
+        file_params['size_z'] = file_params['size'][2]
+
+        file_params['equil'] = unprefix(file_params['equil'])
+        file_params['diffusion'] = unprefix(file_params['diffusion'])
+        file_params['msd'] = unprefix(file_params['msd'])
+
+        # loop through temperatures and load+update each input files
+        for temp in self.sim_ids:
+            file_params['temp'] = temp
+
+            for fn in self.file_order:
+                # load input file lines
+                in_file = LammpsInput(file_path = PKG_DIR / 'templates' / self.__class__.__name__ / fn)
+                in_file.add_params(file_params)
+
+                # save file objects
+                self.state[temp]['input_files'][fn] = in_file
+            
+            logger.debug(f'Defined input files for temperature {temp}')
+    
+    def build_directory(self):
+        self.dir.mkdir()
+
+        for temp in self.sim_ids:
+            subdir = self.dir / f'{temp}K'
+            subdir.mkdir()
+            self.state[temp].update({'dir' : subdir})
+
+    def run_lammps(self):
+        for temp in self.sim_ids:
+            sim_dir = self.state[temp]['dir']
+
+            # define seeds for velocity initial conditions
+            seeds = set()
+            while len(seeds) < self.input_yml['members']:
+                seeds.add(random.randint(0, 100000))
+            seeds = list(seeds)
+
+            sq_dis = None
+            for member in range(self.input_yml['members']):
+                # write input files
+                for fn, lmpfile in self.state[temp]['input_files'].items():
+                    # update seed in velocity initialization
+                    for i, line in enumerate(lmpfile.lines):
+                        if 'velocity' in line:
+                            vel_line = strip_split(line)
+                            vel_line[-1] = seeds[member]
+                            lmpfile.lines[i] = tilps(vel_line)
+                    
+                    lmpfile.write_to_file(sim_dir / fn)
+                
+                # run LAMMPS
+                lmp_out = open(sim_dir / 'lmp.out', 'w')
+                lammps_cmd = ['srun', '--export=ALL', 'lmp', '-in', self.file_order[0]]
+                logger.debug(f'Launching LAMMPS for T={temp} and member={member}...')
+                subprocess.run(lammps_cmd, cwd=sim_dir, stdout=lmp_out, stderr=subprocess.STDOUT)
+                logger.debug(f'LAMMPS finished.')
+
+                # plot the equilibriation curve
+                equil_log = LammpsLog(sim_dir / 'equil.log')
+                equil_log.plot_values()
+
+                # extract squared displacement curve and plot it
+                dif_log = LammpsLog(sim_dir / 'diffusion.log')
+                dif_log.plot_values()
+
+                t = np.array(dif_log.data['Step'])
+                current_sq_dis = np.array(dif_log.data['c_msdvar[4]'])
+                if sq_dis is None:
+                    sq_dis = current_sq_dis
+                else:
+                    sq_dis = np.vstack((sq_dis, current_sq_dis))
+
+            # compute mean square
+            logger.debug(f'Computing mean squared displacement')
+            msd = []
+            if self.input_yml['members'] > 1:              
+                for col in range(len(sq_dis[0, :])):
+                    msd.append(float(np.mean(sq_dis[:, col])))      
+            else:
+                msd = sq_dis.tolist()
+                logger.debug('WARNING: Ensemble consists of only 1 member. Do not trust the MSD!')
+            
+            logger.debug(f'Writing MSD data to a file...')
+
+            with open(sim_dir / 'msd.txt', 'w') as msd_file:
+                msd_file.write(f'time[ns]\t msd[A2]\n')
+                for i in range(len(t)):
+                    msd_file.write(f'{t[i]}\t {msd[i]}\n')
+            
+            logger.debug(f'Plotting displacement curves...')
+
+            # plot every square displacement curve
+            if self.input_yml['members'] > 1:
+                for row in range(len(sq_dis[:, 0])):
+                    plt.plot(t, sq_dis[row, :])
+            else:
+                plt.plot(t, sq_dis)
+            
+            plt.savefig(sim_dir / 'all_msd.png')
+            plt.close()
+
+            # plot msd
+            plt.plot(t, msd)
+            plt.xlabel('Time [ns]')
+            plt.ylabel('Mean Squared Displacement')
+            plt.savefig(sim_dir / 'msd.png')
+            plt.close()
+
+            self.state[temp]['msd'] = msd
+        
+        # compare msd for each temp
+        logger.debug(f'Plotting MSD comparison by temperature')
+        for temp in self.sim_ids:
+            plt.plot(t, self.state[temp]['msd'], label=f'{temp}K')
+
+        plt.legend()
+        plt.xlabel('Time [ns]')
+        plt.ylabel('Mean Squared Displacement')
+        plt.savefig(self.dir / 'msd_by_T.png')
+        plt.close()
+    
+        logger.debug('Done.')
+
+@register_study
+class VacancyDiffusion(Study):    
     def __init__(self, input_yml: dict[str, dict]):
         self.input_yml = input_yml
         self.dir = next_path(Path(input_yml['dir']) / 'vac_diffusion')
@@ -322,7 +478,7 @@ class VacancyDiffusion(Study):
         plt.savefig(self.dir / 'msd_by_T.png')
         plt.close()
     
-    logger.debug('Done.')
+        logger.debug('Done.')
 
 class LammpsFile:
     def __init__(self):

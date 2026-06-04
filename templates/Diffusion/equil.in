@@ -1,0 +1,11 @@
+log equil.log
+thermo_style custom step etotal temp
+thermo 1000
+
+timestep ?timestep?
+velocity all create ?temp? 123
+
+fix 1 all nvt temp ?temp? ?temp? 100
+fix 2 all momentum 100 linear 1 1 1
+
+run ?equil?
