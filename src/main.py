@@ -153,23 +153,31 @@ class PointDefectDiffusion(Study):
             num_running, num_left = 0, copy(self.input_yml['members'])
             jobs: dict[int, LammpsJob] = dict.fromkeys(range(self.input_yml['members']))
 
-            current_member = 0
-            while num_left > 0: 
-                # write input files
-                for fn, lmpfile in self.state[temp]['input_files'].items():
-                    # update seed in velocity initialization
-                    for i, line in enumerate(lmpfile.lines): 
-                        if 'velocity' in line:
-                            vel_line = strip_split(line)
-                            vel_line[-1] = seeds[current_member]
-                            lmpfile.lines[i] = tilps(vel_line)
-                    lmpfile.write_to_file(sim_dir / str(current_member) / fn)
+            while num_left > 0:
+                for member_id, job in jobs.items():
+                    
+                    if job is not None:
+                        job.poll()                       
+                        if job.finished and not job.counted:
+                            num_running -= 1
+                            num_left -= 1
+                            job.counted = True
 
-                # run LAMMPS
-                jobs.update({current_member: LammpsJob(sim_dir/str(current_member), self.params['processors'])})
-                jobs[current_member].process.wait()
-                num_left -= 1
-                current_member += 1
+                    else:
+                        if num_running*self.input_yml['processors'] < NTASKS and num_running < num_left:
+                            # write input files
+                            for fn, lmpfile in self.state[temp]['input_files'].items():
+                                # update seed in velocity initialization
+                                for i, line in enumerate(lmpfile.lines): 
+                                    if 'velocity' in line:
+                                        vel_line = strip_split(line)
+                                        vel_line[-1] = seeds[member_id]
+                                        lmpfile.lines[i] = tilps(vel_line)
+                                lmpfile.write_to_file(sim_dir / str(member_id) / fn)
+
+                            # run LAMMPS
+                            jobs.update({member_id: LammpsJob(sim_dir/str(member_id), self.params['processors'])})
+                            num_running += 1
 
         logger.debug('Done.')
 
