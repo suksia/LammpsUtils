@@ -52,7 +52,7 @@ def main():
     study.analyze()
 
     # analyze data
-    logger.debug(f'Plotting and saving simulation...')
+    logger.debug(f'Plotting and saving simulation data...')
     study.save_data()
 
     logger.debug('Done.')
@@ -179,7 +179,8 @@ class PointDefectDiffusion(Study):
                         if stat == status:
                             next_found = True
                             break
-                    break
+                    if next_found:
+                        break
                 if next_found:
                     return temp, mem_i
                 else:
@@ -223,14 +224,9 @@ class PointDefectDiffusion(Study):
 
             # launch a job if possible
             if num_running < math.floor(NTASKS / self.input_yml['processors']) and num_running < num_left:
-                next_kws = check_status(0, return_next=True)
-                
-                # skip job creation if there is no job with 0 status
-                if next_kws is None:
-                    continue
-                else:
-                    temp, mem_i = next_kws
-                    job_dir = self.state[temp]['dir']/str(mem_i)
+                temp, mem_i = check_status(0, return_next=True)
+
+                job_dir = self.state[temp]['dir']/str(mem_i)
 
                 # write input files
                 for fn, lmpfile in self.state[temp]['input_files'].items():
@@ -251,8 +247,10 @@ class PointDefectDiffusion(Study):
         """Obtain the squared displacements and MSD for each temperature and method (self-diffusion, defect diffusion)."""
         # initialize data dictionary mem_id -> SD list, MSD -> np.array/list, t -> list
         members_dict = {mem_i: None for mem_i in range(self.input_yml['members'])}
+        members_dict.update({'msd': None})
+
         temp_dict = {temp: deepcopy(members_dict) for temp in self.sim_ids}
-        temp_dict.update({'msd': None})
+
         self.data.update({'self': deepcopy(temp_dict), 'defect': deepcopy(temp_dict)})
 
         # self-diffusion data first
@@ -282,7 +280,7 @@ class PointDefectDiffusion(Study):
             self.data['self'][temp]['msd'] = msd
 
         # save time in ns using previous sq_file loaded
-        self.data.update({'t': [sq_file.data['Step'] * self.input_yml['timestep'] / 1000]})
+        self.data.update({'t': [step*self.input_yml['timestep'] / 1000 for step in sq_file.data['Step']]})
         
     def save_data(self):
         """Plot curves and write out data."""
@@ -299,24 +297,24 @@ class PointDefectDiffusion(Study):
             for mem_i in range(self.input_yml['members']):
                 plt.plot(self.data['t'], self.data['self'][temp][mem_i])
             plt.xlabel('Time [ns]')
-            plt.ylabel(r'Squared Displacement [$\r{A}^2$]')
-            plt.savefig(self.state[temp]['dir'] / str(mem_i) / 'self_sd.png')
+            plt.ylabel('Squared Displacement [$Å^2$]')
+            plt.savefig(self.state[temp]['dir'] / 'self_sd.png')
             plt.close()
 
         # save msd data
         logger.debug(f'Writing MSD data...')
         for temp in self.sim_ids:
             with open(self.state[temp]['dir'] / 'self_msd.txt', 'w') as msd_file:
-                msd_file.write(f'time[ns]\t\t msd[angstrom-squared]\n')
+                msd_file.write('time[ns]\t\t msd[Å2]\n')
                 for i in range(len(self.data['t'])):
-                    msd_file.write(f'{self.data['t'][i]}\t\t {self.data['self'][temp]['msd'][i]}\n')
+                    msd_file.write(f"{self.data['t'][i]}\t\t {self.data['self'][temp]['msd'][i]}\n")
 
         # plot MSD for each temperature
         logger.debug(f'Plotting MSD curves...')
         for temp in self.sim_ids:
             plt.plot(self.data['t'], self.data['self'][temp]['msd'])
             plt.xlabel('Time [ns]')
-            plt.ylabel('Mean Squared Displacement [$\r{A}^2$]')
+            plt.ylabel('Mean Squared Displacement [$Å^2$]')
             plt.savefig(self.state[temp]['dir'] / 'self_msd.png')
             plt.close()
         
@@ -326,7 +324,7 @@ class PointDefectDiffusion(Study):
             plt.plot(self.data['t'], self.data['self'][temp]['msd'], label=f'{temp}K')
         plt.legend()
         plt.xlabel('Time [ns]')
-        plt.ylabel('Mean Squared Displacement [$\r{A}^2$]')
+        plt.ylabel('Mean Squared Displacement [$Å^2$]')
         plt.savefig(self.dir / 'self_msd_by_T.png')
         plt.close()
 
