@@ -263,12 +263,15 @@ class LammpsJob:
             'main.in']
         
         self.process = subprocess.Popen(self.lammps_cmd, cwd=self.member_dir, stdout=self.outfile, stderr=subprocess.STDOUT)
+        print(self.member_dir.name, self.process.pid)
         logger.debug(f'Launching LAMMPS for T={self.member_dir.parent.name} and member={self.member_dir.name}...')
 
     def poll(self):
+        print(self.member_dir.name, self.process.pid)
         if self.process.poll():
-            self.outfile.close()
             self.finished = True
+        else:
+            print(self.member_dir.name, self.process.pid)
 
 class LammpsInput:
     def __init__(self, file_path: Path = None, content_str: str = None):
