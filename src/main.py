@@ -152,101 +152,25 @@ class PointDefectDiffusion(Study):
             # launch jobs until all are finished
             num_running, num_left = 0, copy(self.input_yml['members'])
             jobs: dict[int, LammpsJob] = dict.fromkeys(range(self.input_yml['members']))
-            while num_left > 0:
-                # check for finished processes
-                for member_i, job in jobs.items():
-                    if job is None:
-                        continue
-                    elif job.counted:
-                        continue
-                    elif job.poll():
-                        if job.finished and not job.counted:
-                            num_left -= 1
-                            num_running -= 1
-                            job.counted = True
-                            logger.debug(f'LAMMPS finished for member {member_i}')
-                
-                # launch a job if possible
-                if num_running*self.input_yml['processors'] < NTASKS and num_running < num_left:
-                    # next member = next index that is None
-                    for key, val in jobs.items():
-                        if val is None:
-                            member_i = key
-                            break
-                    
-                    # write input files
-                    for fn, lmpfile in self.state[temp]['input_files'].items():
-                        # update seed in velocity initialization
-                        for i, line in enumerate(lmpfile.lines): 
-                            if 'velocity' in line:
-                                vel_line = strip_split(line)
-                                vel_line[-1] = seeds[member_i]
-                                lmpfile.lines[i] = tilps(vel_line)
-                        lmpfile.write_to_file(sim_dir / str(member_i) / fn)
 
-                    # run LAMMPS
-                    jobs.update({member_i: LammpsJob(sim_dir/str(member_i), self.params['processors'])})
-                    num_running += 1
+            current_member = 0
+            while num_left > 0: 
+                # write input files
+                for fn, lmpfile in self.state[temp]['input_files'].items():
+                    # update seed in velocity initialization
+                    for i, line in enumerate(lmpfile.lines): 
+                        if 'velocity' in line:
+                            vel_line = strip_split(line)
+                            vel_line[-1] = seeds[current_member]
+                            lmpfile.lines[i] = tilps(vel_line)
+                    lmpfile.write_to_file(sim_dir / str(current_member) / fn)
 
-            # compute MSD
-            sq_dis = None
-            for member_i in range(self.input_yml['members']):
-                logfile = LammpsLog(sim_dir/str(member_i)/'diffusion.log')
-                if sq_dis is None:
-                        sq_dis = np.array(logfile.data['c_msdvar[4]'])
-                else:
-                    sq_dis = np.vstack((sq_dis, logfile.data['c_msdvar[4]']))
-            
-            t = logfile.data['Step']
-            
-            # compute msd
-            logger.debug(f'Computing mean squared displacement')
-            msd = []
-            if self.input_yml['members'] > 1:              
-                for col in range(len(sq_dis[0, :])):
-                    msd.append(float(np.mean(sq_dis[:, col])))      
-            else:
-                msd = sq_dis.tolist()
-                logger.debug('WARNING: Ensemble consists of only 1 member. Do not trust the MSD!')
-            
-            # save msd data
-            logger.debug(f'Writing MSD data to a file...')
-            with open(sim_dir / 'msd.txt', 'w') as msd_file:
-                msd_file.write(f'time[ns]\t msd[A2]\n')
-                for i in range(len(t)):
-                    msd_file.write(f'{t[i]}\t {msd[i]}\n')
+                # run LAMMPS
+                jobs.update({current_member: LammpsJob(sim_dir/str(current_member), self.params['processors'])})
+                jobs[current_member].process.wait()
+                num_left -= 1
+                current_member += 1
 
-            # plot all ensemble members squared displacement curves together
-            logger.debug(f'Plotting displacement curves...')
-            if self.input_yml['members'] > 1:
-                for row in range(len(sq_dis[:, 0])):
-                    plt.plot(t, sq_dis[row, :])
-            else:
-                plt.plot(t, sq_dis)
-            
-            plt.savefig(sim_dir / 'all_msd.png')
-            plt.close()
-
-            # plot MSD
-            plt.plot(t, msd)
-            plt.xlabel('Time [ns]')
-            plt.ylabel('Mean Squared Displacement')
-            plt.savefig(sim_dir / 'msd.png')
-            plt.close()
-
-            self.state[temp]['msd'] = msd
-        
-        # compare msd for each temp
-        logger.debug(f'Plotting MSD comparison by temperature')
-        for temp in self.sim_ids:
-            plt.plot(t, self.state[temp]['msd'], label=f'{temp}K')
-
-        plt.legend()
-        plt.xlabel('Time [ns]')
-        plt.ylabel('Mean Squared Displacement')
-        plt.savefig(self.dir / 'msd_by_T.png')
-        plt.close()
-    
         logger.debug('Done.')
 
 class LammpsJob:
