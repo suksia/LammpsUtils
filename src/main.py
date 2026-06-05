@@ -109,7 +109,7 @@ class PointDefectDiffusion(Study):
 
             for fp in template_dir.iterdir():
                 # define minimize.in as an empty file if not going to quench snapshots
-                if fp == 'minimize.in' and self.params['quench'] == False:
+                if fp.name == 'minimize.in' and self.params['quench'] == False:
                     in_file = LammpsInput()
                 
                 # skip defining the input file for the opposite defect type 
@@ -181,7 +181,7 @@ class PointDefectDiffusion(Study):
                                 vel_line = strip_split(line)
                                 vel_line[-1] = seeds[member_i]
                                 lmpfile.lines[i] = tilps(vel_line)
-                            lmpfile.write_to_file(sim_dir / str(member_i) / fn)
+                        lmpfile.write_to_file(sim_dir / str(member_i) / fn)
 
                     # run LAMMPS
                     jobs.update({member_i: LammpsJob(sim_dir/str(member_i), self.params['processors'])})
@@ -195,9 +195,9 @@ class LammpsJob:
         self.counted = False
 
         self.lammps_cmd = [
-            'mpirun', 
-            '-n',
-            f'{num_processors}', 
+            'srun', 
+            f'-n={num_processors}',
+            '--export=ALL', 
             'lmp', 
             '-in', 
             'main.in']
