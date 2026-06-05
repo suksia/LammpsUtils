@@ -113,7 +113,7 @@ class PointDefectDiffusion(Study):
                     in_file = LammpsInput()
                 
                 # skip defining the input file for the opposite defect type 
-                elif fp == 'interstitial.in' or fp == 'vacancy.in':
+                elif fp.name == 'interstitial.in' or fp.name == 'vacancy.in':
                     if self.params['defect'] not in fp.name:
                         continue
 
@@ -190,9 +190,9 @@ class PointDefectDiffusion(Study):
             for member_i in range(self.input_yml['members']):
                 logfile = LammpsLog(sim_dir/str(member_i)/'diffusion.log')
                 if sq_dis is None:
-                        sq_dis = np.array(logfile.data['tot_msd'])
+                        sq_dis = np.array(logfile.data['c_msdvar[4]'])
                 else:
-                    sq_dis = np.vstack((sq_dis, logfile.data['tot_msd']))
+                    sq_dis = np.vstack((sq_dis, logfile.data['c_msdvar[4]']))
             
             t = logfile.data['Step']
             
@@ -255,7 +255,7 @@ class LammpsJob:
 
         self.lammps_cmd = [
             'srun', 
-            f'-n={num_processors}',
+            f'--ntasks={num_processors}',
             '--export=ALL', 
             'lmp', 
             '-in', 

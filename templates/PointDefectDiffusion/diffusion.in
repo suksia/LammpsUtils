@@ -1,8 +1,7 @@
 compute msdvar all msd
-variable tot_msd equal msdvar[4]
 
 log diffusion.log
-thermo_style custom step tot_msd
+thermo_style custom step c_msdvar[4]
 thermo ?snapshot?
 
 dump 1 all custom ?snapshot? diffusion.dump id type x y z
