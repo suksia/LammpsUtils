@@ -161,6 +161,7 @@ class PointDefectDiffusion(Study):
                         if job.finished and not job.counted:
                             num_left -= 1
                             num_running -= 1
+                            job.counted = True
                             logger.debug(f'LAMMPS finished for member {member_i}')
                 
                 # launch a job if possible
