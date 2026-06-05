@@ -108,18 +108,18 @@ class PointDefectDiffusion(Study):
             template_dir = PKG_DIR / 'templates' / self.__class__.__name__
 
             for fp in template_dir.iterdir():
-                # define minimize.in as an empty file if not going to quench snapshots
-                if fp.name == 'minimize.in' and self.params['quench'] == False:
-                    in_file = LammpsInput()
-                
                 # skip defining the input file for the opposite defect type 
-                elif fp.name == 'interstitial.in' or fp.name == 'vacancy.in':
+                if fp.name == 'interstitial.in' or fp.name == 'vacancy.in':
                     if self.params['defect'] not in fp.name:
                         continue
-
+                
+                # define minimize.in as an empty file if not going to quench snapshots
+                elif fp.name == 'minimize.in' and self.params['quench'] == False:
+                    in_file = LammpsInput()
                 else:
                     in_file = LammpsInput(file_path=fp)
-                    in_file.add_params(self.params)
+
+                in_file.add_params(self.params)
 
                 # save file object
                 self.state[temp]['input_files'][fp.name] = in_file
@@ -156,6 +156,8 @@ class PointDefectDiffusion(Study):
                 # check for finished processes
                 for member_i, job in jobs.items():
                     if job is None:
+                        continue
+                    elif job.counted:
                         continue
                     elif job.poll():
                         if job.finished and not job.counted:
@@ -263,15 +265,15 @@ class LammpsJob:
             'main.in']
         
         self.process = subprocess.Popen(self.lammps_cmd, cwd=self.member_dir, stdout=self.outfile, stderr=subprocess.STDOUT)
-        print(self.member_dir.name, self.process.pid)
         logger.debug(f'Launching LAMMPS for T={self.member_dir.parent.name} and member={self.member_dir.name}...')
 
     def poll(self):
-        print(self.member_dir.name, self.process.pid)
         if self.process.poll():
             self.finished = True
+            return 1
         else:
-            print(self.member_dir.name, self.process.pid)
+            return 0
+            
 
 class LammpsInput:
     def __init__(self, file_path: Path = None, content_str: str = None):
