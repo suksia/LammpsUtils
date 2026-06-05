@@ -17,7 +17,7 @@ PKG_DIR = Path(__file__).parent.parent
 os.environ['LAMMPS_POTENTIALS'] = (PKG_DIR / 'potentials').as_posix()
 logger.debug(f'Defined LAMMPS_POTENTIALS environment variable')
 
-NTASKS = os.environ['SLURM_NTASKS']
+NTASKS = int(os.environ['SLURM_NTASKS'])
 
 def main():
     # load input file
@@ -70,7 +70,7 @@ def register_study(cls):
 class PointDefectDiffusion(Study):
     def __init__(self, input_yml: dict[str, dict]):
         self.input_yml = input_yml
-        self.dir = next_path(Path(input_yml['dir']) / f'{input_yml['defect']}_diffusion')
+        self.dir = next_path(Path(input_yml['dir']) / f"{input_yml['defect']}_diffusion")
 
         self.name = self.input_yml['name']
         logger.debug(f'Starting study: {self.name}')
@@ -104,6 +104,7 @@ class PointDefectDiffusion(Study):
         self.state = {key: {'input_files': {}} for key in self.sim_ids}
 
         for temp in self.sim_ids:
+            self.params['temp'] = temp
             template_dir = PKG_DIR / 'templates' / self.__class__.__name__
 
             for fp in template_dir.iterdir():
@@ -165,7 +166,7 @@ class PointDefectDiffusion(Study):
                             logger.debug(f'LAMMPS finished for member {member_i}')
                 
                 # launch a job if possible
-                if (num_running+1)*self.input_yml['processors'] < NTASKS and num_running < num_left:
+                if num_running*self.input_yml['processors'] <= NTASKS and num_running < num_left:
                     # next member = next index that is None
                     for key, val in jobs.items():
                         if val is None:
@@ -194,9 +195,9 @@ class LammpsJob:
         self.counted = False
 
         self.lammps_cmd = [
-            'srun', 
-            f'--ntasks={num_processors}', 
-            '--export=ALL', 
+            'mpirun', 
+            '-n',
+            f'{num_processors}', 
             'lmp', 
             '-in', 
             'main.in']
