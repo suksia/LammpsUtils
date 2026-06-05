@@ -1,4 +1,4 @@
-import argparse, yaml, logging, sys, subprocess, os, shutil, re, random
+import argparse, yaml, logging, sys, subprocess, os, shutil, re, random, math
 from pathlib import Path
 from utils import *
 from copy import copy, deepcopy
@@ -16,6 +16,8 @@ logging.getLogger("matplotlib").setLevel(logging.FATAL)
 PKG_DIR = Path(__file__).parent.parent
 os.environ['LAMMPS_POTENTIALS'] = (PKG_DIR / 'potentials').as_posix()
 logger.debug(f'Defined LAMMPS_POTENTIALS environment variable')
+
+NTASKS = os.environ['SLURM_NTASKS']
 
 def main():
     # load input file
@@ -45,7 +47,6 @@ def main():
     logger.debug(f'Starting LAMMPS simulations...')
     study.run_lammps()
 
-
 class Study:
     def __init__(self, input_yml: dict[str, dict]):
         pass
@@ -66,63 +67,75 @@ def register_study(cls):
     return cls
 
 @register_study
-class Diffusion(Study):
+class PointDefectDiffusion(Study):
     def __init__(self, input_yml: dict[str, dict]):
         self.input_yml = input_yml
-        self.dir = next_path(Path(input_yml['dir']) / 'diffusion')
-        self.file_order = None
+        self.dir = next_path(Path(input_yml['dir']) / f'{input_yml['defect']}_diffusion')
 
         self.name = self.input_yml['name']
         logger.debug(f'Starting study: {self.name}')
 
-        self.state, self.sim_ids, self.skip_sim_ids = {}, [], []
-        logger.debug(f'Initializing state...')
-        self.init_state()
-    
-    def init_state(self):
+        # add/modify some input parameters
+        self.params = deepcopy(input_yml)
+
+        self.params['size_x'] = self.params['size'][0]
+        self.params['size_y'] = self.params['size'][1]
+        self.params['size_z'] = self.params['size'][2]
+
+        if input_yml['defect'] == 'int':
+            self.params['pd_fn'] = 'interstitial.in'
+        elif input_yml['defect'] == 'vac':
+            self.params['pd_fn'] = 'vacancy.in'
+
+        self.params['pd_x'] = self.params['position'][0]
+        self.params['pd_y'] = self.params['position'][1]
+        self.params['pd_z'] = self.params['position'][2]
+
+        self.params['equil'] = unprefix(self.params['equil'])
+        self.params['diffusion'] = unprefix(self.params['diffusion'])
+        self.params['snapshot'] = unprefix(self.params['snapshot'])
+        self.params['num_snapshots'] = int(self.params['diffusion'] / self.params['snapshot'])
+
+        # initialize state starting with input files for each temperature
         self.sim_ids = self.input_yml['temperatures']
         if type(self.sim_ids) != list:
             self.sim_ids = [self.sim_ids]
 
-        self.file_order = ['main.in', 'equil.in', 'diffusion.in']
+        self.state = {key: {'input_files': {}} for key in self.sim_ids}
 
-        self.state = dict.fromkeys(self.sim_ids)
-
-        # initialize each sim with a new dict (dict.fromkeys initializes them with the same value reference)
-        for key in self.state.keys():
-            self.state[key] = {'input_files': {}}
-
-        # add/modify some parameters that are implicit
-        file_params = deepcopy(self.input_yml)
-
-        file_params['size_x'] = file_params['size'][0]
-        file_params['size_y'] = file_params['size'][1]
-        file_params['size_z'] = file_params['size'][2]
-
-        file_params['equil'] = unprefix(file_params['equil'])
-        file_params['diffusion'] = unprefix(file_params['diffusion'])
-        file_params['msd'] = unprefix(file_params['msd'])
-
-        # loop through temperatures and load+update each input files
         for temp in self.sim_ids:
-            file_params['temp'] = temp
+            template_dir = PKG_DIR / 'templates' / self.__class__.__name__
 
-            for fn in self.file_order:
-                # load input file lines
-                in_file = LammpsInput(file_path = PKG_DIR / 'templates' / self.__class__.__name__ / fn)
-                in_file.add_params(file_params)
+            for fp in template_dir.iterdir():
+                # define minimize.in as an empty file if not going to quench snapshots
+                if fp == 'minimize.in' and self.params['quench'] == False:
+                    in_file = LammpsInput()
+                
+                # skip defining the input file for the opposite defect type 
+                elif fp == 'interstitial.in' or fp == 'vacancy.in':
+                    if self.params['defect'] not in fp.name:
+                        continue
 
-                # save file objects
-                self.state[temp]['input_files'][fn] = in_file
+                else:
+                    in_file = LammpsInput(file_path=fp)
+                    in_file.add_params(self.params)
+
+                # save file object
+                self.state[temp]['input_files'][fp.name] = in_file
             
             logger.debug(f'Defined input files for temperature {temp}')
-    
+
     def build_directory(self):
         self.dir.mkdir()
 
         for temp in self.sim_ids:
             subdir = self.dir / f'{temp}K'
             subdir.mkdir()
+
+            for m in range(self.params['members']):
+                member_subdir = subdir / str(m)
+                member_subdir.mkdir()
+
             self.state[temp].update({'dir' : subdir})
 
     def run_lammps(self):
@@ -136,355 +149,67 @@ class Diffusion(Study):
             seeds = list(seeds)
 
             sq_dis = None
-            for member in range(self.input_yml['members']):
-                # write input files
-                for fn, lmpfile in self.state[temp]['input_files'].items():
-                    # update seed in velocity initialization
-                    for i, line in enumerate(lmpfile.lines):
-                        if 'velocity' in line:
-                            vel_line = strip_split(line)
-                            vel_line[-1] = seeds[member]
-                            lmpfile.lines[i] = tilps(vel_line)
-                    
-                    lmpfile.write_to_file(sim_dir / fn)
+            num_running, num_left = 0, copy(self.input_yml['members'])
+
+            # launch jobs until all are finished
+            jobs: dict[int, LammpsJob] = dict.fromkeys(range(self.input_yml['members']))
+            while num_left > 0:
+                # check for finished processes
+                for member_i, job in jobs.items():
+                    if job is None:
+                        continue
+                    elif job.poll():
+                        if job.finished and not job.counted:
+                            num_left -= 1
+                            num_running -= 1
+                            logger.debug(f'LAMMPS finished for member {member_i}')
                 
-                # run LAMMPS
-                lmp_out = open(sim_dir / 'lmp.out', 'w')
-                lammps_cmd = ['srun', '--export=ALL', 'lmp', '-in', self.file_order[0]]
-                logger.debug(f'Launching LAMMPS for T={temp} and member={member}...')
-                subprocess.run(lammps_cmd, cwd=sim_dir, stdout=lmp_out, stderr=subprocess.STDOUT)
-                logger.debug(f'LAMMPS finished.')
+                # launch a job if possible
+                if (num_running+1)*self.input_yml['processors'] < NTASKS and num_running < num_left:
+                    # next member = next index that is None
+                    for key, val in jobs.items():
+                        if val is None:
+                            member_i = key
+                            break
+                    
+                    # write input files
+                    for fn, lmpfile in self.state[temp]['input_files'].items():
+                        # update seed in velocity initialization
+                        for i, line in enumerate(lmpfile.lines): 
+                            if 'velocity' in line:
+                                vel_line = strip_split(line)
+                                vel_line[-1] = seeds[member_i]
+                                lmpfile.lines[i] = tilps(vel_line)
+                            lmpfile.write_to_file(sim_dir / str(member_i) / fn)
 
-                # plot the equilibriation curve
-                equil_log = LammpsLog(sim_dir / 'equil.log')
-                equil_log.plot_values()
+                    # run LAMMPS
+                    jobs.update({member_i: LammpsJob(sim_dir/str(member_i), self.params['processors'])})
+                    num_running += 1
 
-                # extract squared displacement curve and plot it
-                dif_log = LammpsLog(sim_dir / 'diffusion.log')
-                dif_log.plot_values()
+class LammpsJob:
+    def __init__(self, member_dir: Path, num_processors: int):
+        self.member_dir = member_dir
+        self.outfile = open(member_dir / 'lmp.out', 'w')
+        self.finished = False
+        self.counted = False
 
-                t = np.array(dif_log.data['Step'])
-                current_sq_dis = np.array(dif_log.data['c_msdvar[4]'])
-                if sq_dis is None:
-                    sq_dis = current_sq_dis
-                else:
-                    sq_dis = np.vstack((sq_dis, current_sq_dis))
-
-            # compute mean square
-            logger.debug(f'Computing mean squared displacement')
-            msd = []
-            if self.input_yml['members'] > 1:              
-                for col in range(len(sq_dis[0, :])):
-                    msd.append(float(np.mean(sq_dis[:, col])))      
-            else:
-                msd = sq_dis.tolist()
-                logger.debug('WARNING: Ensemble consists of only 1 member. Do not trust the MSD!')
-            
-            logger.debug(f'Writing MSD data to a file...')
-
-            with open(sim_dir / 'msd.txt', 'w') as msd_file:
-                msd_file.write(f'time[ns]\t msd[A2]\n')
-                for i in range(len(t)):
-                    msd_file.write(f'{t[i]}\t {msd[i]}\n')
-            
-            logger.debug(f'Plotting displacement curves...')
-
-            # plot every square displacement curve
-            if self.input_yml['members'] > 1:
-                for row in range(len(sq_dis[:, 0])):
-                    plt.plot(t, sq_dis[row, :])
-            else:
-                plt.plot(t, sq_dis)
-            
-            plt.savefig(sim_dir / 'all_msd.png')
-            plt.close()
-
-            # plot msd
-            plt.plot(t, msd)
-            plt.xlabel('Time [ns]')
-            plt.ylabel('Mean Squared Displacement')
-            plt.savefig(sim_dir / 'msd.png')
-            plt.close()
-
-            self.state[temp]['msd'] = msd
+        self.lammps_cmd = [
+            'srun', 
+            f'--ntasks={num_processors}', 
+            '--export=ALL', 
+            'lmp', 
+            '-in', 
+            'main.in']
         
-        # compare msd for each temp
-        logger.debug(f'Plotting MSD comparison by temperature')
-        for temp in self.sim_ids:
-            plt.plot(t, self.state[temp]['msd'], label=f'{temp}K')
+        self.process = subprocess.Popen(self.lammps_cmd, cwd=self.member_dir, stdout=self.outfile, stderr=subprocess.STDOUT)
+        logger.debug(f'Launching LAMMPS for T={self.member_dir.parent.name} and member={self.member_dir.name}...')
 
-        plt.legend()
-        plt.xlabel('Time [ns]')
-        plt.ylabel('Mean Squared Displacement')
-        plt.savefig(self.dir / 'msd_by_T.png')
-        plt.close()
-    
-        logger.debug('Done.')
+    def poll(self):
+        if self.process.poll():
+            self.outfile.close()
+            self.finished = True
 
-@register_study
-class VacancyDiffusion(Study):    
-    def __init__(self, input_yml: dict[str, dict]):
-        self.input_yml = input_yml
-        self.dir = next_path(Path(input_yml['dir']) / 'vac_diffusion')
-        self.file_order = None
-
-        self.name = self.input_yml['name']
-        logger.debug(f'Starting study: {self.name}')
-
-        self.state, self.sim_ids, self.skip_sim_ids = {}, [], []
-        logger.debug(f'Initializing state...')
-        self.init_state()
-
-    def init_state(self):
-        self.sim_ids = self.input_yml['temperatures']
-        if type(self.sim_ids) != list:
-            self.sim_ids = [self.sim_ids]
-
-        self.file_order = ['main.in', 'equil.in', 'diffusion.in', 'minimize.in']
-
-        self.state = dict.fromkeys(self.sim_ids)
-
-        # initialize each sim with a new dict (dict.fromkeys initializes them with the same value reference)
-        for key in self.state.keys():
-            self.state[key] = {'input_files': {}}
-
-        # add/modify some parameters that are implicit
-        file_params = deepcopy(self.input_yml)
-
-        file_params['size_x'] = file_params['size'][0]
-        file_params['size_y'] = file_params['size'][1]
-        file_params['size_z'] = file_params['size'][2]
-
-        file_params['equil'] = unprefix(file_params['equil'])
-        file_params['vac_equil'] = unprefix(file_params['vac_equil'])
-        file_params['diffusion'] = unprefix(file_params['diffusion'])
-        file_params['snapshot'] = unprefix(file_params['snapshot'])
-        file_params['num_snapshots'] = int(file_params['diffusion'] / file_params['snapshot'])
-
-        # loop through temperatures and load+update each input files
-        for temp in self.sim_ids:
-            file_params['temp'] = temp
-
-            for fn in self.file_order:
-                # load input file lines
-                in_file = LammpsInput(file_path = PKG_DIR / 'templates' / self.__class__.__name__ / fn)
-                in_file.add_params(file_params)
-
-                # save file objects
-                self.state[temp]['input_files'][fn] = in_file
-            
-            logger.debug(f'Defined input files for temperature {temp}')
-
-    def build_directory(self):
-        self.dir.mkdir()
-
-        for temp in self.sim_ids:
-            subdir = self.dir / f'{temp}K'
-            subdir.mkdir()
-            self.state[temp].update({'dir' : subdir})
-
-    def run_lammps(self):
-        for temp in self.sim_ids:
-            sim_dir = self.state[temp]['dir']
-
-            # define seeds for velocity initial conditions
-            seeds = set()
-            while len(seeds) < self.input_yml['members']:
-                seeds.add(random.randint(0, 100000))
-            seeds = list(seeds)
-
-            with open(sim_dir / 'progress.log', 'w') as prog:
-                prog.write('member  num_jumps\n')
-
-            sq_dis = None
-            for member in range(self.input_yml['members']):
-                # write input files
-                for fn, lmpfile in self.state[temp]['input_files'].items():
-                    # update seed in velocity initialization
-                    for i, line in enumerate(lmpfile.lines):
-                        if 'velocity' in line:
-                            vel_line = strip_split(line)
-                            vel_line[-1] = seeds[member]
-                            lmpfile.lines[i] = tilps(vel_line)
-                    
-                    lmpfile.write_to_file(sim_dir / fn)
-                
-                # run LAMMPS
-                lmp_out = open(sim_dir / 'lmp.out', 'w')
-                lammps_cmd = ['srun', '--export=ALL', 'lmp', '-in', self.file_order[0]]
-                logger.debug(f'Launching LAMMPS for T={temp} and member={member}...')
-                subprocess.run(lammps_cmd, cwd=sim_dir, stdout=lmp_out, stderr=subprocess.STDOUT)
-                logger.debug(f'LAMMPS finished. Extracting vacancy positions...')
-
-                # plot the equilibriation curve
-                lmp_log = LammpsLog(sim_dir / 'equil.log')
-                lmp_log.plot_values()
-
-                # obtain vacancy positions using Wigner-Seitz cell analysis on quenched snapshots
-                pipeline = import_file(sim_dir / 'minimize.dump')
-
-                # outputs sites as particles DataCollection with "Occupancy" property
-                ws = WignerSeitzAnalysisModifier()
-                pipeline.modifiers.append(ws)
-
-                # custom modifier to obtain a vacancy position for each snapshot
-                def modify(frame, data):
-                    # per-site occupancy (0 = vacancy, 1 = normal site, 2 = interstitial)
-                    occupancies = data.particles['Occupancy']
-
-                    # add a boolean "Selection" property which will be 1 for sites with a vacancy
-                    selection = data.particles_.create_property('Selection')
-                    selection[...] = occupancies == 0
-
-                    # add a data attribute for the current frame which is the vacancy position
-                    vacancy_idx = np.nonzero(selection)
-                    data.attributes['VacancyCount'] = np.sum(selection)
-                    data.attributes['VacancyPosition'] = data.particles.positions[vacancy_idx]
-
-                # write vacancy positions
-                pipeline.modifiers.append(modify)
-                export_file(
-                    pipeline, 
-                    sim_dir / 'vacancies.txt', 
-                    'txt/attr',
-                    columns = ['Timestep', 'VacancyCount', 'VacancyPosition'],
-                    multiple_frames = True)
-
-                # compute square displacement as a function of time
-                frames = [frame for frame in pipeline.frames]
-                t, current_sq_dis, num_jumps, num_crosses = [0], [0.0], 0, [0, 0, 0]
-                ref_vac_pos = frames[1].attributes['VacancyPosition'][0]
-
-                box_width = [self.input_yml['lattice_const']*size for size in self.input_yml['size']]
-                dr_tol = 0.80*min(box_width)
-                prev_vac_pos = copy(ref_vac_pos)
-
-                with open(sim_dir / 'unwrapped.txt', 'w') as unw:
-                    unw.write('Time\t Current Pos\t Number of crosses\t Unwrapped Pos\t Squared Disp\n')
-
-                for frame in frames[2:]:
-                    t_step =  frame.attributes['Timestep']
-                    vac_pos = frame.attributes['VacancyPosition']
-
-                    if len(vac_pos) > 1:
-                        logger.debug(f'WARNING: More than 1 vacancy detected for timestep={t_step}! Quenching failed.')
-                    vac_pos = vac_pos[0]
-
-                    # determine if a hop occured and unwrap coordinates if a boundary was crossed
-                    dr = vac_pos - prev_vac_pos
-                    if np.linalg.norm(dr) > 0.1:
-                        num_jumps += 1
-
-                    # unwrap each coord
-                    unwrapped_vac_pos = np.array([0.0, 0.0, 0.0])
-                    for i in range(3):
-                        # crossed a box boundary
-                        if abs(dr[i]) > dr_tol:
-                            # direction of cross (+1 = high, -1 = low)
-                            cross_dir = -np.sign(dr[i])
-
-                            # number of times already crossed this boundary
-                            num_crosses[i] += int(cross_dir)
-                            
-                        # update coord
-                        unwrapped_vac_pos[i] = vac_pos[i] + num_crosses[i]*box_width[i]
-
-                    current_t = t_step*float(self.input_yml['timestep'])/1000
-                    sq_dis_val = float(np.linalg.norm(unwrapped_vac_pos - ref_vac_pos)**2)
-                    t.append(current_t)
-                    current_sq_dis.append(sq_dis_val)
-
-                    with open(sim_dir / 'unwrapped.txt', 'a') as unw:
-                        unw.write(f'{current_t}\t {vac_pos}\t {num_crosses}\t {unwrapped_vac_pos}\t {sq_dis_val:.3f}\n')
-                    
-                    # create dumps file with vacancy trajectory
-                    trj_header_lines = [
-                        'ITEM: TIMESTEP\n',
-                        f'{t_step}\n'
-                        'ITEM: NUMBER OF ATOMS\n',
-                        '1\n'
-                        'ITEM: BOX BOUNDS pp pp pp\n',
-                        f'0.0 {box_width[0]}\n',
-                        f'0.0 {box_width[1]}\n',
-                        f'0.0 {box_width[2]}\n',
-                        'ITEM: ATOMS id type x y z\n',
-                    ]   
-
-                    with open(sim_dir / 'vac_trj.dump', 'a') as trj:
-                        trj.writelines(trj_header_lines)
-                        trj.write(f'1 1 {vac_pos[0]} {vac_pos[1]} {vac_pos[2]}\n')
-
-                    with open(sim_dir / 'vac_trj_unw.dump', 'a') as trj:
-                        trj.writelines(trj_header_lines)
-                        trj.write(f'1 1 {unwrapped_vac_pos[0]} {unwrapped_vac_pos[1]} {unwrapped_vac_pos[2]}\n')
-
-                    prev_vac_pos = vac_pos
-                
-                logger.debug(f'Vacancy jumped {num_jumps} times for T={temp} and member={member}. Writing info...')
-                with open(sim_dir / 'progress.log', 'a') as prog:
-                    prog.write(f'{member}\t\t{num_jumps}\n')
-                
-                if sq_dis is None:
-                    sq_dis = np.array(current_sq_dis)
-                else:
-                    sq_dis = np.vstack((sq_dis, current_sq_dis))
-
-            # compute mean square 
-            logger.debug(f'Computing mean squared displacement')
-            msd = []
-            if self.input_yml['members'] > 1:              
-                for col in range(len(sq_dis[0, :])):
-                    msd.append(float(np.mean(sq_dis[:, col])))      
-            else:
-                msd = sq_dis.tolist()
-                logger.debug('WARNING: Ensemble consists of only 1 member. Do not trust the MSD!')
-            
-            logger.debug(f'Writing MSD data to a file...')
-
-            with open(sim_dir / 'msd.txt', 'w') as msd_file:
-                msd_file.write(f'time[ns]\t msd[A2]\n')
-                for i in range(len(t)):
-                    msd_file.write(f'{t[i]}\t {msd[i]}\n')
-            
-            logger.debug(f'Plotting displacement curves...')
-
-            # plot every square displacement curve
-            if self.input_yml['members'] > 1:
-                for row in range(len(sq_dis[:, 0])):
-                    plt.plot(t, sq_dis[row, :])
-            else:
-                plt.plot(t, sq_dis)
-            
-            plt.savefig(sim_dir / 'all_msd.png')
-            plt.close()
-
-            # plot msd
-            plt.plot(t, msd)
-            plt.xlabel('Time [ns]')
-            plt.ylabel('Mean Squared Displacement')
-            plt.savefig(sim_dir / 'msd.png')
-            plt.close()
-
-            self.state[temp]['msd'] = msd
-        
-        # compare msd for each temp
-        logger.debug(f'Plotting MSD comparison by temperature')
-        for temp in self.sim_ids:
-            plt.plot(t, self.state[temp]['msd'], label=f'{temp}K')
-
-        plt.legend()
-        plt.xlabel('Time [ns]')
-        plt.ylabel('Mean Squared Displacement')
-        plt.savefig(self.dir / 'msd_by_T.png')
-        plt.close()
-    
-        logger.debug('Done.')
-
-class LammpsFile:
-    def __init__(self):
-        pass
-
-class LammpsInput(LammpsFile):
+class LammpsInput:
     def __init__(self, file_path: Path = None, content_str: str = None):
         self.lines = []
         self.last_read_path = None

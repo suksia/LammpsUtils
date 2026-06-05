@@ -11,9 +11,23 @@ pair_style ?pair_style?
 pair_coeff * * ?potential? ?element?
 
 neighbor ?skin? bin
-neigh_modify delay 10
+neigh_modify delay 0 check yes
 
+write_dump all custom init.dump id type x y z
 write_dump all custom minimize.dump id type x y z
+
+include ?pd_fn?
+
+log init.log
+thermo_style custom step e_pot temp
+thermo 1
+
+min_style cg
+minimize 1e-10 1e-10 1000 100000
+
+write_dump all custom init.dump id type x y z modify append yes
+
+neigh_modify delay 10
 
 include equil.in
 include diffusion.in

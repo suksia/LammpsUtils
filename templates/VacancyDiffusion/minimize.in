@@ -12,7 +12,7 @@ read_dump diffusion.dump ${tstep} x y z replace yes
 
 reset_timestep 0
 
-minimize 1e-10 1e-10 1000 100000
+minimize 1e-5 1e-5 1000 100000
 
 reset_timestep ${tstep}
 write_dump all custom minimize.dump id type x y z modify append yes

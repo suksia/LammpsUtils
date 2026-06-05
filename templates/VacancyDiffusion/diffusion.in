@@ -2,9 +2,9 @@ log diffusion.log
 thermo_style custom step etotal temp
 thermo 100000
 
-reset_timestep 0
-
 dump 1 all custom ?snapshot? diffusion.dump id type x y z
+
+reset_timestep 0
 
 run ?diffusion?
  
