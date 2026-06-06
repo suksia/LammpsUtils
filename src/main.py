@@ -110,9 +110,13 @@ class PointDefectDiffusion(Study):
         elif self.input_yml['defect'] == 'vac':
             self.params['pd_fn'] = 'vacancy.in'
 
-        self.params['pd_x'] = self.params['position'][0]
-        self.params['pd_y'] = self.params['position'][1]
-        self.params['pd_z'] = self.params['position'][2]
+        if self.input_yml['defect'] == 'int':
+            sf = 1/self.params['lattice_const']
+        else:
+            sf = 1
+        self.params['pd_x'] = sf*self.params['position'][0]
+        self.params['pd_y'] = sf*self.params['position'][1]
+        self.params['pd_z'] = sf*self.params['position'][2]
 
         self.params['equil'] = unprefix(self.params['equil'])
         self.params['diffusion'] = unprefix(self.params['diffusion'])
@@ -318,7 +322,7 @@ class PointDefectDiffusion(Study):
                     multiple_frames = True)
 
                 # compute square displacement
-                sq_dis = []
+                sq_dis = [0]
                 frames = [frame for frame in pipeline.frames]
                 ref_def_pos = frames[1].attributes['DefectPosition'][0]
                 
