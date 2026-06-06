@@ -320,7 +320,7 @@ class PointDefectDiffusion(Study):
                 # compute square displacement
                 sq_dis = []
                 frames = [frame for frame in pipeline.frames]
-                ref_def_pos = frames[0].attributes['DefectPosition'][0]
+                ref_def_pos = frames[1].attributes['DefectPosition'][0]
                 
                 defect_tsteps, num_jumps, num_crosses = [0], 0, [0, 0, 0]
                 box_width = [self.input_yml['lattice_const']*size for size in self.input_yml['size']]
@@ -363,7 +363,7 @@ class PointDefectDiffusion(Study):
                     sq_dis.append(sq_dis_val)
 
                     with open(job_dir / 'unwrapped.txt', 'a') as unw:
-                        unw.write(f'{t_step*self.input_yml['timestep']/1000}\t {def_pos}\t {num_crosses}\t {unwrapped_def_pos}\t {sq_dis_val:.3f}\n')
+                        unw.write(f"{t_step*self.input_yml['timestep']/1000}\t {def_pos}\t {num_crosses}\t {unwrapped_def_pos}\t {sq_dis_val:.3f}\n")
                     
                     # create dumps file with vacancy trajectory
                     trj_header_lines = [
