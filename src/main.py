@@ -330,7 +330,7 @@ class PointDefectDiffusion(Study):
                     unw.write('Time\t Current Pos\t Number of crosses\t Unwrapped Pos\t Squared Disp\n')
 
                 prev_def_pos = copy(ref_def_pos)
-                for frame in frames[1:]:
+                for frame in frames[2:]:
                     t_step =  frame.attributes['Timestep']
                     def_pos = frame.attributes['DefectPosition']
 

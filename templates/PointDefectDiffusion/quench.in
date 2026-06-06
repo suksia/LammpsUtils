@@ -1,3 +1,7 @@
+log quench.log
+thermo_style custom step pe
+thermo 1
+
 neigh_modify delay 0 check yes
 
 label loop

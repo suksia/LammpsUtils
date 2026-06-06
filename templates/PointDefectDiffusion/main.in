@@ -20,7 +20,7 @@ write_dump all custom quench.dump id type x y z
 include ?pd_fn?
 
 log init.log
-thermo_style custom step pe temp
+thermo_style custom step pe
 thermo 1
 
 min_style cg
