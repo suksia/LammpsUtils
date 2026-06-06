@@ -87,7 +87,31 @@ def register_study(cls):
 class PointDefectDiffusion(Study):
     def __init__(self, input_yml: dict[str, dict]):
         self.input_yml = input_yml
-        self.dir = next_path(Path(input_yml['dir']) / f"{input_yml['defect']}_diffusion")
+        self.dir = None
+
+        # check directory for restart file first
+        input_dir = Path(input_yml['dir'])
+        assert input_dir.exists(), f'Directory {input_dir} does not exist'
+
+        for file in input_dir.iterdir():
+            if file.name == 'LammpsUtils.restart':
+                logger.debug(f'Restart file found. Reading contents...')
+                self.dir = input_dir
+
+                self.restart: dict[int, list[int]] = {}
+                with open(input_dir/'LammpsUtils.restart', 'r') as rf:
+                    for line in rf.readlines():
+                        temp, mem_i = strip_split(line)
+
+                        if temp not in self.restart.keys():
+                            self.restart.update({temp: [mem_i]})
+                        else:
+                            self.restart[temp].append(mem_i)
+                break
+        
+        if self.dir is None:
+            self.dir = next_path(Path(input_yml['dir']) / f"{input_yml['defect']}_diffusion")
+            self.restart = False
 
         self.name = self.input_yml['name']
         logger.debug(f'Starting study: {self.name}')
@@ -171,11 +195,11 @@ class PointDefectDiffusion(Study):
 
         for temp in self.sim_ids:
             subdir = self.dir / f'{temp}K'
-            subdir.mkdir()
+            subdir.mkdir(exist_ok=True)
 
             for m in range(self.params['members']):
                 member_subdir = subdir / str(m)
-                member_subdir.mkdir()
+                member_subdir.mkdir(exist_ok=True)
 
             self.state[temp].update({'dir' : subdir})
 
@@ -226,7 +250,10 @@ class PointDefectDiffusion(Study):
         while len(seeds) < tot_num_jobs:
             seeds.add(random.randint(0, 100000))
         seeds = list(seeds)
-               
+
+        # create/overwrite 
+        restart_file = open(self.dir / 'LammpsUtils.restart', 'w')
+
         # launch jobs until all have been counted
         while check_status(2) < tot_num_jobs:
             num_running, num_left = check_status(1), check_status(0)
@@ -237,11 +264,19 @@ class PointDefectDiffusion(Study):
                 job.poll()
                 if job.finished and not job.counted:
                     jobs_status[temp][mem_i] = 2
+                    restart_file.write(f'{temp}\t{mem_i}\n')
                     logger.debug(f'LAMMPS finished for T={temp} and member={mem_i}')
 
             # launch a job if possible
             if num_running < math.floor(NTASKS / self.input_yml['processors']) and num_running < num_left:
                 temp, mem_i = check_status(0, return_next=True)
+                
+                # check if temp/mem_i combo has already been run
+                if self.restart:
+                    if mem_i in self.restart[temp]:
+                        jobs_status[temp][mem_i] = 2
+                        logger.debug(f'LAMMPS has already been run for T={temp} and member={mem_i}. Skipping it')
+                        continue
 
                 job_dir = self.state[temp]['dir']/str(mem_i)
 
@@ -259,6 +294,8 @@ class PointDefectDiffusion(Study):
                 # run LAMMPS and save process
                 jobs[temp][mem_i] = LammpsJob(job_dir, self.params['processors'])
                 jobs_status[temp][mem_i] = 1
+        
+        restart_file.close()
 
     def analyze(self):
         """Obtain the squared displacements and MSD for each temperature and method (self-diffusion, defect diffusion)."""
@@ -301,7 +338,7 @@ class PointDefectDiffusion(Study):
         
         for temp in self.sim_ids:
             # create file for writing number of jumps for each temperature
-            with open(job_dir / 'jumps.txt', 'w') as jumps:
+            with open(self.state[temp]['dir'] / 'jumps.txt', 'w') as jumps:
                 jumps.write(f"{'Member':<10} {'Jumps':<10}\n")
 
             for mem_i in range(self.input_yml['members']):
