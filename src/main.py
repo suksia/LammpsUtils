@@ -135,6 +135,8 @@ class PointDefectDiffusion(Study):
                 if fp.name == 'interstitial.in' or fp.name == 'vacancy.in':
                     if self.params['defect'] not in fp.name:
                         continue
+                    else:
+                        in_file = LammpsInput(file_path=fp)
                 
                 # define minimize.in as an empty file if not going to quench snapshots
                 elif fp.name == 'minimize.in' and self.params['quench'] == False:
@@ -267,20 +269,146 @@ class PointDefectDiffusion(Study):
                     self.data['self'][temp]['msd'] = np.array(sq_dis)
                 else:
                     self.data['self'][temp]['msd'] = np.vstack((self.data['self'][temp]['msd'], np.array(sq_dis)))
+
+        # save time in ns using previous sq_file loaded
+        self.data.update({'t': [step*self.input_yml['timestep'] / 1000 for step in sq_file.data['Step']]})
+
+        # defect diffusion next using Wigner-Seitz cell anaylsis in OVITO
+        if self.input_yml['quench']:
+            dump_fn = 'minimize.dump'
+        else:
+            dump_fn = 'diffusion.dump'
+        
+        if self.input_yml['defect'] == 'int':
+            occupancy = 1
+        elif self.input_yml['defect'] == 'vac':
+            occupancy = 0
+
+        for temp in self.sim_ids:
+            for mem_i in range(self.input_yml['members']):
+                job_dir: Path = self.state[temp]['dir'] / str(mem_i)
+                pipeline = import_file(job_dir / dump_fn)
+
+                # outputs sites as particles DataCollection with "Occupancy" property
+                ws = WignerSeitzAnalysisModifier()
+                pipeline.modifiers.append(ws)
+
+                # custom modifier to obtain a vacancy position for each snapshot
+                def modify(frame, data):
+                    # per-site occupancy (0 = vacancy, 1 = normal site, 2 = interstitial)
+                    occupancies = data.particles['Occupancy']
+
+                    # add a boolean "Selection" property which will be 1 for sites with a vacancy
+                    selection = data.particles_.create_property('Selection')
+                    selection[...] = occupancies == occupancy
+
+                    # add a data attribute for the current frame which is the vacancy position
+                    selected_idx = np.nonzero(selection)
+                    data.attributes['DefectCount'] = np.sum(selection)
+                    data.attributes['DefectPosition'] = data.particles.positions[selected_idx]
+                    data.attributes['Occupancy'] = occupancy
+
+                # write vacancy positions
+                pipeline.modifiers.append(modify)
+                export_file(
+                    pipeline, 
+                    job_dir / 'vacancies.txt', 
+                    'txt/attr',
+                    columns = ['Timestep', 'Occupancy', 'DefectCount', 'DefectPosition'],
+                    multiple_frames = True)
+
+                # compute square displacement
+                sq_dis = []
+                frames = [frame for frame in pipeline.frames]
+                ref_def_pos = frames[0].attributes['DefectPosition'][0]
+                
+                num_jumps, num_crosses = 0, [0, 0, 0]
+                box_width = [self.input_yml['lattice_const']*size for size in self.input_yml['size']]
+                boundary_jump_tol = 0.80*min(box_width)
+
+                with open(job_dir / 'unwrapped.txt', 'w') as unw:
+                    unw.write('Time\t Current Pos\t Number of crosses\t Unwrapped Pos\t Squared Disp\n')
+
+                prev_def_pos = copy(ref_def_pos)
+                for frame in frames[1:]:
+                    t_step =  frame.attributes['Timestep']
+                    def_pos = frame.attributes['DefectPosition']
+
+                    if len(def_pos) > 1:
+                        logger.debug(f'WARNING: More than 1 defect detected for timestep={t_step}!')
+                    def_pos = def_pos[0]
+
+                    # determine if a jump occured and unwrap coordinates if a boundary was crossed
+                    dr = def_pos - prev_def_pos
+                    if np.linalg.norm(dr) > 0.1:
+                        num_jumps += 1
+
+                    # unwrap each coord
+                    unwrapped_def_pos = np.array([0.0, 0.0, 0.0])
+                    for i in range(3):
+                        # crossed a box boundary
+                        if abs(dr[i]) > boundary_jump_tol:
+                            # direction of cross (+1 = high, -1 = low)
+                            cross_dir = -np.sign(dr[i])
+
+                            # number of times already crossed this boundary
+                            num_crosses[i] += int(cross_dir)
+                            
+                        # update coord
+                        unwrapped_def_pos[i] = def_pos[i] + num_crosses[i]*box_width[i]
+
+                    sq_dis_val = float(np.linalg.norm(unwrapped_def_pos - ref_def_pos)**2)
+                    sq_dis.append(sq_dis_val)
+
+                    with open(job_dir / 'unwrapped.txt', 'a') as unw:
+                        unw.write(f'{t_step*self.input_yml['timestep']/1000}\t {def_pos}\t {num_crosses}\t {unwrapped_def_pos}\t {sq_dis_val:.3f}\n')
+                    
+                    # create dumps file with vacancy trajectory
+                    trj_header_lines = [
+                        'ITEM: TIMESTEP\n',
+                        f'{t_step}\n'
+                        'ITEM: NUMBER OF ATOMS\n',
+                        '1\n'
+                        'ITEM: BOX BOUNDS pp pp pp\n',
+                        f'0.0 {box_width[0]}\n',
+                        f'0.0 {box_width[1]}\n',
+                        f'0.0 {box_width[2]}\n',
+                        'ITEM: ATOMS id type x y z\n',
+                    ]
+
+                    with open(job_dir / 'vac_trj.dump', 'a') as trj:
+                        trj.writelines(trj_header_lines)
+                        trj.write(f'1 1 {def_pos[0]} {def_pos[1]} {def_pos[2]}\n')
+
+                    with open(job_dir / 'vac_trj_unw.dump', 'a') as trj:
+                        trj.writelines(trj_header_lines)
+                        trj.write(f'1 1 {unwrapped_def_pos[0]} {unwrapped_def_pos[1]} {unwrapped_def_pos[2]}\n')
+
+                    prev_def_pos = def_pos
+                
+                # write out number of jumps
+                with open(job_dir.parent / 'jumps.txt', 'a') as jf:
+                    jf.write(f'{mem_i}\t\t{num_jumps}\n')
+                
+                # save squared displacement for current member
+                self.data['defect'][temp][mem_i] = sq_dis
+
+                if self.data['defect'][temp]['msd'] is None:
+                    self.data['defect'][temp]['msd'] = np.array(sq_dis)
+                else:
+                    self.data['defect'][temp]['msd'] = np.vstack((self.data['defect'][temp]['msd'], sq_dis))
             
+        for method in ['self', 'defect']:
             # compute MSD for temperature
             logger.debug(f'Computing mean squared displacement for T={temp}')
             msd = []
             if self.input_yml['members'] > 1:
-                for col in range(len(self.data['self'][temp]['msd'][0, :])):
-                    msd.append(float(np.mean(self.data['self'][temp]['msd'][:, col])))
+                for col in range(len(self.data[method][temp]['msd'][0, :])):
+                    msd.append(float(np.mean(self.data[method][temp]['msd'][:, col])))
             else:
-                msd = self.data['self'][temp]['msd'].tolist()
+                msd = self.data[method][temp]['msd'].tolist()
                 logger.debug('WARNING: Ensemble consists of only 1 member. Do not trust the MSD!')
-            self.data['self'][temp]['msd'] = msd
-
-        # save time in ns using previous sq_file loaded
-        self.data.update({'t': [step*self.input_yml['timestep'] / 1000 for step in sq_file.data['Step']]})
+            self.data[method][temp]['msd'] = msd
         
     def save_data(self):
         """Plot curves and write out data."""
@@ -291,43 +419,43 @@ class PointDefectDiffusion(Study):
                 equil_log = LammpsLog(self.state[temp]['dir'] / str(mem_i) / 'equil.log')
                 equil_log.plot_values()
 
-        # plot squared displacement curves together
-        logger.debug(f'Plotting displacement curves...')
-        for temp in self.sim_ids:
-            for mem_i in range(self.input_yml['members']):
-                plt.plot(self.data['t'], self.data['self'][temp][mem_i])
-            plt.xlabel('Time [ns]')
-            plt.ylabel('Squared Displacement [$Å^2$]')
-            plt.savefig(self.state[temp]['dir'] / 'self_sd.png')
-            plt.close()
+        for method in ['self', 'defect']:
+            # plot squared displacement curves together
+            logger.debug(f'Plotting displacement curves...')
+            for temp in self.sim_ids:
+                for mem_i in range(self.input_yml['members']):
+                    plt.plot(self.data['t'], self.data[method][temp][mem_i])
+                plt.xlabel('Time [ns]')
+                plt.ylabel('Squared Displacement [$Å^2$]')
+                plt.savefig(self.state[temp]['dir'] / f'{method}_sd.png')
+                plt.close()
 
-        # save msd data
-        logger.debug(f'Writing MSD data...')
-        for temp in self.sim_ids:
-            with open(self.state[temp]['dir'] / 'self_msd.txt', 'w') as msd_file:
-                msd_file.write('time[ns]\t\t msd[Å2]\n')
-                for i in range(len(self.data['t'])):
-                    msd_file.write(f"{self.data['t'][i]}\t\t {self.data['self'][temp]['msd'][i]}\n")
+            # save msd data
+            logger.debug(f'Writing MSD data...')
+            for temp in self.sim_ids:
+                with open(self.state[temp]['dir'] / f'{method}_msd.txt', 'w') as msd_file:
+                    msd_file.write('time[ns]\t\t msd[Å2]\n')
+                    for i in range(len(self.data['t'])):
+                        msd_file.write(f"{self.data['t'][i]}\t\t {self.data[method][temp]['msd'][i]}\n")
 
-        # plot MSD for each temperature
-        logger.debug(f'Plotting MSD curves...')
-        for temp in self.sim_ids:
-            plt.plot(self.data['t'], self.data['self'][temp]['msd'])
+            # plot MSD for each temperature
+            logger.debug(f'Plotting MSD curves...')
+            for temp in self.sim_ids:
+                plt.plot(self.data['t'], self.data[method][temp]['msd'])
+                plt.xlabel('Time [ns]')
+                plt.ylabel('Mean Squared Displacement [$Å^2$]')
+                plt.savefig(self.state[temp]['dir'] / f'{method}_msd.png')
+                plt.close()
+            
+            # compare msd for each temp
+            logger.debug(f'Plotting MSD temperature comparison...')
+            for temp in self.sim_ids:
+                plt.plot(self.data['t'], self.data[method][temp]['msd'], label=f'{temp}K')
+            plt.legend()
             plt.xlabel('Time [ns]')
             plt.ylabel('Mean Squared Displacement [$Å^2$]')
-            plt.savefig(self.state[temp]['dir'] / 'self_msd.png')
+            plt.savefig(self.dir / f'{method}_msd_by_T.png')
             plt.close()
-        
-        # compare msd for each temp
-        logger.debug(f'Plotting MSD temperature comparison...')
-        for temp in self.sim_ids:
-            plt.plot(self.data['t'], self.data['self'][temp]['msd'], label=f'{temp}K')
-        plt.legend()
-        plt.xlabel('Time [ns]')
-        plt.ylabel('Mean Squared Displacement [$Å^2$]')
-        plt.savefig(self.dir / 'self_msd_by_T.png')
-        plt.close()
-
 
 class LammpsJob:
     def __init__(self, member_dir: Path, num_processors: int):
