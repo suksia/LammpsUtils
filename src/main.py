@@ -284,7 +284,7 @@ class PointDefectDiffusion(Study):
             dump_fn = 'diffusion.dump'
         
         if self.input_yml['defect'] == 'int':
-            occupancy = 1
+            occupancy = 2
         elif self.input_yml['defect'] == 'vac':
             occupancy = 0
 
