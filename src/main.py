@@ -271,7 +271,7 @@ class PointDefectDiffusion(Study):
                     self.data['self'][temp]['msd'] = np.vstack((self.data['self'][temp]['msd'], np.array(sq_dis)))
 
         # save time in ns using previous sq_file loaded
-        self.data.update({'t': [step*self.input_yml['timestep'] / 1000 for step in sq_file.data['Step']]})
+        self.data['self'].update({'t': [step*self.input_yml['timestep'] / 1000 for step in sq_file.data['Step']]})
 
         # defect diffusion next using Wigner-Seitz cell anaylsis in OVITO
         if self.input_yml['quench']:
@@ -322,7 +322,7 @@ class PointDefectDiffusion(Study):
                 frames = [frame for frame in pipeline.frames]
                 ref_def_pos = frames[0].attributes['DefectPosition'][0]
                 
-                num_jumps, num_crosses = 0, [0, 0, 0]
+                defect_tsteps, num_jumps, num_crosses = [0], 0, [0, 0, 0]
                 box_width = [self.input_yml['lattice_const']*size for size in self.input_yml['size']]
                 boundary_jump_tol = 0.80*min(box_width)
 
@@ -356,6 +356,8 @@ class PointDefectDiffusion(Study):
                             
                         # update coord
                         unwrapped_def_pos[i] = def_pos[i] + num_crosses[i]*box_width[i]
+
+                    defect_tsteps.append(t_step)
 
                     sq_dis_val = float(np.linalg.norm(unwrapped_def_pos - ref_def_pos)**2)
                     sq_dis.append(sq_dis_val)
@@ -397,6 +399,9 @@ class PointDefectDiffusion(Study):
                     self.data['defect'][temp]['msd'] = np.array(sq_dis)
                 else:
                     self.data['defect'][temp]['msd'] = np.vstack((self.data['defect'][temp]['msd'], sq_dis))
+
+        # save time in ns using previous sq_file loaded
+        self.data['defect'].update({'t': [step*self.input_yml['timestep'] / 1000 for step in defect_tsteps]})
             
         for method in ['self', 'defect']:
             # compute MSD for temperature
@@ -424,7 +429,7 @@ class PointDefectDiffusion(Study):
             logger.debug(f'Plotting displacement curves...')
             for temp in self.sim_ids:
                 for mem_i in range(self.input_yml['members']):
-                    plt.plot(self.data['t'], self.data[method][temp][mem_i])
+                    plt.plot(self.data[method]['t'], self.data[method][temp][mem_i])
                 plt.xlabel('Time [ns]')
                 plt.ylabel('Squared Displacement [$Å^2$]')
                 plt.savefig(self.state[temp]['dir'] / f'{method}_sd.png')
@@ -435,13 +440,13 @@ class PointDefectDiffusion(Study):
             for temp in self.sim_ids:
                 with open(self.state[temp]['dir'] / f'{method}_msd.txt', 'w') as msd_file:
                     msd_file.write('time[ns]\t\t msd[Å2]\n')
-                    for i in range(len(self.data['t'])):
-                        msd_file.write(f"{self.data['t'][i]}\t\t {self.data[method][temp]['msd'][i]}\n")
+                    for i in range(len(self.data[method]['t'])):
+                        msd_file.write(f"{self.data[method]['t'][i]}\t\t {self.data[method][temp]['msd'][i]}\n")
 
             # plot MSD for each temperature
             logger.debug(f'Plotting MSD curves...')
             for temp in self.sim_ids:
-                plt.plot(self.data['t'], self.data[method][temp]['msd'])
+                plt.plot(self.data[method]['t'], self.data[method][temp]['msd'])
                 plt.xlabel('Time [ns]')
                 plt.ylabel('Mean Squared Displacement [$Å^2$]')
                 plt.savefig(self.state[temp]['dir'] / f'{method}_msd.png')
@@ -450,7 +455,7 @@ class PointDefectDiffusion(Study):
             # compare msd for each temp
             logger.debug(f'Plotting MSD temperature comparison...')
             for temp in self.sim_ids:
-                plt.plot(self.data['t'], self.data[method][temp]['msd'], label=f'{temp}K')
+                plt.plot(self.data[method]['t'], self.data[method][temp]['msd'], label=f'{temp}K')
             plt.legend()
             plt.xlabel('Time [ns]')
             plt.ylabel('Mean Squared Displacement [$Å^2$]')
