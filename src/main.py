@@ -7,6 +7,7 @@ from ovito.modifiers import WignerSeitzAnalysisModifier
 from ovito.io import import_file, export_file
 import numpy as np
 
+
 # basic logger
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 logger = logging.getLogger('LammpsUtils')
@@ -122,6 +123,16 @@ class PointDefectDiffusion(Study):
         self.params['diffusion'] = unprefix(self.params['diffusion'])
         self.params['snapshot'] = unprefix(self.params['snapshot'])
         self.params['num_snapshots'] = int(self.params['diffusion'] / self.params['snapshot'])
+
+        if 'tlo' in self.input_yml.keys():
+            self.params['tlo'] = self.input_yml['tlo']
+        else:
+            self.params['tlo'] = None
+        
+        if 'thi' in self.input_yml.keys():
+            self.params['thi'] = self.input_yml['thi']
+        else:
+            self.params['thi'] = None
 
         # initialize state starting with input files for each temperature
         self.sim_ids = self.input_yml['temperatures']
@@ -275,7 +286,7 @@ class PointDefectDiffusion(Study):
                     self.data['self'][temp]['msd'] = np.vstack((self.data['self'][temp]['msd'], np.array(sq_dis)))
 
         # save time in ns using previous sq_file loaded
-        self.data['self'].update({'t': [step*self.input_yml['timestep'] / 1000 for step in sq_file.data['Step']]})
+        self.data.update({'t': [step*self.input_yml['timestep'] / 1000 for step in sq_file.data['Step']]})
 
         # defect diffusion next using Wigner-Seitz cell anaylsis in OVITO
         if self.input_yml['quench']:
@@ -287,8 +298,12 @@ class PointDefectDiffusion(Study):
             occupancy = 2
         elif self.input_yml['defect'] == 'vac':
             occupancy = 0
-
+        
         for temp in self.sim_ids:
+            # create file for writing number of jumps for each temperature
+            with open(job_dir / 'jumps.txt', 'w') as jumps:
+                jumps.write(f"{'Member':<10} {'Jumps':<10}\n")
+
             for mem_i in range(self.input_yml['members']):
                 job_dir: Path = self.state[temp]['dir'] / str(mem_i)
                 pipeline = import_file(job_dir / dump_fn)
@@ -316,7 +331,7 @@ class PointDefectDiffusion(Study):
                 pipeline.modifiers.append(modify)
                 export_file(
                     pipeline, 
-                    job_dir / 'vacancies.txt', 
+                    job_dir / 'ovito.txt', 
                     'txt/attr',
                     columns = ['Timestep', 'Occupancy', 'DefectCount', 'DefectPosition'],
                     multiple_frames = True)
@@ -331,10 +346,10 @@ class PointDefectDiffusion(Study):
                 boundary_jump_tol = 0.80*min(box_width)
 
                 with open(job_dir / 'unwrapped.txt', 'w') as unw:
-                    unw.write('Time\t Current Pos\t Number of crosses\t Unwrapped Pos\t Squared Disp\n')
+                    unw.write(f"{'Time':<10} {'Current Pos':<25} {'Number of crosses':<20} {'Unwrapped Pos':<25} {'Squared Disp':<15}\n")
 
                 prev_def_pos = copy(ref_def_pos)
-                for frame in frames[2:]:
+                for frame in frames[1:]:
                     t_step =  frame.attributes['Timestep']
                     def_pos = frame.attributes['DefectPosition']
 
@@ -367,8 +382,8 @@ class PointDefectDiffusion(Study):
                     sq_dis.append(sq_dis_val)
 
                     with open(job_dir / 'unwrapped.txt', 'a') as unw:
-                        unw.write(f"{t_step*self.input_yml['timestep']/1000}\t {def_pos}\t {num_crosses}\t {unwrapped_def_pos}\t {sq_dis_val:.3f}\n")
-                    
+                        unw.write(f"{t_step*self.input_yml['timestep']/1000:<10} {def_pos:<25} {num_crosses:<20} {unwrapped_def_pos:<25} {sq_dis_val:6.3f}\n")
+
                     # create dumps file with vacancy trajectory
                     trj_header_lines = [
                         'ITEM: TIMESTEP\n',
@@ -382,11 +397,11 @@ class PointDefectDiffusion(Study):
                         'ITEM: ATOMS id type x y z\n',
                     ]
 
-                    with open(job_dir / 'vac_trj.dump', 'a') as trj:
+                    with open(job_dir / 'def_trj.dump', 'a') as trj:
                         trj.writelines(trj_header_lines)
                         trj.write(f'1 1 {def_pos[0]} {def_pos[1]} {def_pos[2]}\n')
 
-                    with open(job_dir / 'vac_trj_unw.dump', 'a') as trj:
+                    with open(job_dir / 'def_trj_unw.dump', 'a') as trj:
                         trj.writelines(trj_header_lines)
                         trj.write(f'1 1 {unwrapped_def_pos[0]} {unwrapped_def_pos[1]} {unwrapped_def_pos[2]}\n')
 
@@ -394,8 +409,8 @@ class PointDefectDiffusion(Study):
                 
                 # write out number of jumps
                 with open(job_dir.parent / 'jumps.txt', 'a') as jf:
-                    jf.write(f'{mem_i}\t\t{num_jumps}\n')
-                
+                    jf.write(f'{mem_i:<10} {num_jumps:<10}\n')
+
                 # save squared displacement for current member
                 self.data['defect'][temp][mem_i] = sq_dis
 
@@ -403,13 +418,9 @@ class PointDefectDiffusion(Study):
                     self.data['defect'][temp]['msd'] = np.array(sq_dis)
                 else:
                     self.data['defect'][temp]['msd'] = np.vstack((self.data['defect'][temp]['msd'], sq_dis))
-
-        # save time in ns using previous sq_file loaded
-        self.data['defect'].update({'t': [step*self.input_yml['timestep'] / 1000 for step in defect_tsteps]})
             
         for method in ['self', 'defect']:
             # compute MSD for temperature
-            logger.debug(f'Computing mean squared displacement for T={temp}')
             msd = []
             if self.input_yml['members'] > 1:
                 for col in range(len(self.data[method][temp]['msd'][0, :])):
@@ -418,53 +429,112 @@ class PointDefectDiffusion(Study):
                 msd = self.data[method][temp]['msd'].tolist()
                 logger.debug('WARNING: Ensemble consists of only 1 member. Do not trust the MSD!')
             self.data[method][temp]['msd'] = msd
-        
+
+        # define lower/upper bounds for time axis for fitting diffusivities next
+        if self.params['tlo']:
+            tlo_i = np.argmin(np.abs(np.array(self.data['t'])-self.params['tlo']))
+        else:
+            tlo_i = 0
+
+        if self.params['thi']:
+            thi_i = np.argmin(np.abs(np.array(self.data['t'])-self.params['thi']))
+        else:
+            thi_i = -1
+
+        # fit the data to obtain diffusivities and migration energies
+        for method in ['self', 'defect']:
+            x = self.data['t'][tlo_i:thi_i]
+
+            # fit MSD data first to obtain diffusivity
+            for temp in self.sim_ids:
+                y = self.data[method][temp]['msd'][tlo_i:thi_i]
+                D, D_int, r2 = linear_fit(x, y)
+                self.data[method][temp].update({'D': float(D/6), 'D_intercept': float(D_int), 'D_err': float(r2)})    
+
+            # fit diffusivities next to obtain migration energy
+            if len(self.sim_ids) == 1:
+                logger.debug('WARNING: Not enough temperatures to fit an Arrhenius plot. Skipping migration energy calculation')
+                self.data[method].update({'Emig': None})
+            else:
+                x = [1/temp for temp in self.sim_ids]
+                y = [math.log(self.data[method][temp]['D']) for temp in self.sim_ids]
+                Emig, Emig_int, r2 = linear_fit(x, y)
+                self.data[method].update({'arrhenius_data': (x, y), 'Emig': float(Emig*8.61733e-5), 'Emig_intercept': float(Emig_int), 'Emig_err': float(r2)})
+    
     def save_data(self):
         """Plot curves and write out data."""
-        # plot equilibriation curves
-        logger.debug(f'Plotting equilibriation curves...')
+        # plot equilibriation and squared displacement curves
         for temp in self.sim_ids:
             for mem_i in range(self.input_yml['members']):
                 equil_log = LammpsLog(self.state[temp]['dir'] / str(mem_i) / 'equil.log')
-                equil_log.plot_values()
+                equil_log.plot_values(save_prefix='equil')
+                
+                for method in ['self', 'defect']:
+                    plt.plot(self.data['t'], self.data[method][temp][mem_i])
+                    plt.xlabel('Time [ns]')
+                    plt.ylabel('Squared Displacement [$Å^2$]')
+                    plt.savefig(self.state[temp]['dir'] / f'{method}_sd.png', bbox_inches="tight")
+                    plt.close()
 
         for method in ['self', 'defect']:
             # plot squared displacement curves together
-            logger.debug(f'Plotting displacement curves...')
             for temp in self.sim_ids:
                 for mem_i in range(self.input_yml['members']):
-                    plt.plot(self.data[method]['t'], self.data[method][temp][mem_i])
+                    plt.plot(self.data['t'], self.data[method][temp][mem_i])
                 plt.xlabel('Time [ns]')
                 plt.ylabel('Squared Displacement [$Å^2$]')
-                plt.savefig(self.state[temp]['dir'] / f'{method}_sd.png')
+                plt.savefig(self.state[temp]['dir'] / f'{method}_sd.png', bbox_inches="tight")
                 plt.close()
 
             # save msd data
-            logger.debug(f'Writing MSD data...')
             for temp in self.sim_ids:
                 with open(self.state[temp]['dir'] / f'{method}_msd.txt', 'w') as msd_file:
-                    msd_file.write('time[ns]\t\t msd[Å2]\n')
-                    for i in range(len(self.data[method]['t'])):
-                        msd_file.write(f"{self.data[method]['t'][i]}\t\t {self.data[method][temp]['msd'][i]}\n")
+                    msd_file.write(f"{'time[ns]':<10} {'msd[Å2]':<10}\n")
+                    for i in range(len(self.data['t'])):
+                        msd_file.write(f"{self.data['t'][i]:<10} {self.data[method][temp]['msd'][i]:6.3f}\n")
 
-            # plot MSD for each temperature
-            logger.debug(f'Plotting MSD curves...')
+            # plot MSD for each temperature with fitting line
             for temp in self.sim_ids:
-                plt.plot(self.data[method]['t'], self.data[method][temp]['msd'])
+                a, b, r2 = self.data[method][temp]['D'], self.data[method][temp]['D_intercept'], self.data[method][temp]['D_err']
+                plt.plot(self.data['t'], self.data[method][temp]['msd'])
+                plt.plot(self.data['t'], [6*a*t+b for t in self.data['t']], '--', label=f"$R^2$={100*r2:2.2f}%")
+                plt.title(f'D = {a:1.2e} [$Å^2$/ns]')
                 plt.xlabel('Time [ns]')
                 plt.ylabel('Mean Squared Displacement [$Å^2$]')
-                plt.savefig(self.state[temp]['dir'] / f'{method}_msd.png')
+                plt.legend()
+                plt.savefig(self.state[temp]['dir'] / f'{method}_msd.png', bbox_inches="tight")
                 plt.close()
             
             # compare msd for each temp
-            logger.debug(f'Plotting MSD temperature comparison...')
             for temp in self.sim_ids:
-                plt.plot(self.data[method]['t'], self.data[method][temp]['msd'], label=f'{temp}K')
+                plt.plot(self.data['t'], self.data[method][temp]['msd'], label=f'{temp}K')
             plt.legend()
             plt.xlabel('Time [ns]')
             plt.ylabel('Mean Squared Displacement [$Å^2$]')
-            plt.savefig(self.dir / f'{method}_msd_by_T.png')
+            plt.savefig(self.dir / f'{method}_msd_by_T.png', bbox_inches="tight")
             plt.close()
+
+            # write diffusivity data
+            with open(self.dir / f'{method}_fit.txt', 'w') as df:
+                df.write(f"{'T [K]':<10} {'D [Å2/ns]':<10} {'D [cm2/s]':<10} {'Error [%]':<10}\n")
+                for temp in self.sim_ids:
+                    df.write(f"{temp:<10} {self.data[method][temp]['D']:3.2e} {self.data[method][temp]['D']*10e-7:3.2e} {100*self.data[method][temp]['D_err']:2.2f}\n")
+                df.write('\n')
+                df.write(f"{'Emig [eV]':<10} {'Error [%]':<10}\n")
+                df.write(f"{self.data['Emig']:7.3f} {100*self.data[method][temp]['Emig_err']:2.2f}")
+
+            # plot migration energy fitting
+            if self.data['Emig']:
+                x, y = self.data['arrhenius_data']
+                a, b, r2 = self.data['Emig'], self.data['Emig_intercept'], self.data['Emig_err']
+                plt.plot(x, y)
+                plt.plot(x, x*a/8.61733e-5+b, '--', label=f"$R^2$={100*r2:2.2f}%")
+                plt.title(f'Emig = {a:1.2f} [eV]')
+                plt.xlabel('1/T [$K^{-1}$]')
+                plt.ylabel('ln(D)')
+                plt.legend()
+                plt.savefig(self.dir / f'{method}_arrhenius.png')
+
 
 class LammpsJob:
     def __init__(self, member_dir: Path, num_processors: int):
@@ -576,7 +646,7 @@ class LammpsLog:
                 for j, val in enumerate(line):
                     self.data[data_labels[j]].append(float(val))
 
-    def plot_values(self):
+    def plot_values(self, save_prefix:str = None):
         try:
             x = self.data['Step']
         except:
@@ -585,11 +655,16 @@ class LammpsLog:
         y_labels = list(self.data.keys())
         y_labels.pop(y_labels.index('Step'))
 
+        if save_prefix:
+            save_prefix += '_'
+        else:
+            save_prefix = ''
+
         for y_lab in y_labels:
             plt.plot(x, self.data[y_lab])
             plt.xlabel('Timestep')
             plt.ylabel(y_lab)
-            plt.savefig(self.path.parent / f'{y_lab}.png')
+            plt.savefig(self.path.parent / f'{save_prefix}{y_lab}.png')
             plt.close()
 
 main()
