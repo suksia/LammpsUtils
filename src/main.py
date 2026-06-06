@@ -138,8 +138,8 @@ class PointDefectDiffusion(Study):
                     else:
                         in_file = LammpsInput(file_path=fp)
                 
-                # define minimize.in as an empty file if not going to quench snapshots
-                elif fp.name == 'minimize.in' and self.params['quench'] == False:
+                # define quench.in as an empty file if not going to quench snapshots
+                elif fp.name == 'quench.in' and self.params['quench'] == False:
                     in_file = LammpsInput()
                 else:
                     in_file = LammpsInput(file_path=fp)
@@ -275,7 +275,7 @@ class PointDefectDiffusion(Study):
 
         # defect diffusion next using Wigner-Seitz cell anaylsis in OVITO
         if self.input_yml['quench']:
-            dump_fn = 'minimize.dump'
+            dump_fn = 'quench.dump'
         else:
             dump_fn = 'diffusion.dump'
         

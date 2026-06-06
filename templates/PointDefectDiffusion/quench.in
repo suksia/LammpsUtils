@@ -15,7 +15,7 @@ reset_timestep 0
 minimize 1e-5 1e-5 1000 100000
 
 reset_timestep ${tstep}
-write_dump all custom minimize.dump id type x y z modify append yes
+write_dump all custom quench.dump id type x y z modify append yes
 
 next tstep_idx
 

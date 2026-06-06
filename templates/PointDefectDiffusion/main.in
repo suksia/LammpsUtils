@@ -14,7 +14,8 @@ neighbor ?skin? bin
 neigh_modify delay 0 check yes
 
 write_dump all custom init.dump id type x y z
-write_dump all custom minimize.dump id type x y z
+write_dump all custom diffusion.dump id type x y z
+write_dump all custom quench.dump id type x y z
 
 include ?pd_fn?
 
@@ -32,4 +33,4 @@ neigh_modify delay 10
 
 include equil.in
 include diffusion.in
-include minimize.in
+include quench.in
