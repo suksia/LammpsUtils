@@ -425,11 +425,10 @@ class PointDefectDiffusion(Study):
                     sq_dis.append(sq_dis_val)
 
                     with open(job_dir / 'unwrapped.txt', 'a') as unw:
-                        unw_tstep = float(t_step*self.input_yml['timestep']/1000)
-                        unw_def_pos = def_pos.tolist()
-                        unw_num_crosses = num_crosses.tolist()
-                        unw_unwrapped_def_pos = unwrapped_def_pos.tolist()
-                        unw.write(f"{unw_tstep:<10} {unw_def_pos:<25} {unw_num_crosses:<20} {unw_unwrapped_def_pos:<25} {sq_dis_val:6.3f}\n")
+                        unw_def_pos = '[{:2.2f}, {:2.2f}, {:2.2f}]'.format(def_pos[0], def_pos[1], def_pos[2])
+                        unw_num_crosses = '[{}, {}, {}]'.format(num_crosses[0], num_crosses[1], num_crosses[2])
+                        unw_unwrapped_def_pos = '[{:2.2f}, {:2.2f}, {:2.2f}]'.format(unwrapped_def_pos[0], unwrapped_def_pos[1], unwrapped_def_pos[2])
+                        unw.write(f"{t_step*self.input_yml['timestep']/1000:<10} {unw_def_pos:<25} {unw_num_crosses:<20} {unw_unwrapped_def_pos:<25} {sq_dis_val:6.3f}\n")
 
                     # create dumps file with vacancy trajectory
                     trj_header_lines = [
