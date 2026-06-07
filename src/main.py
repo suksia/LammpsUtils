@@ -257,7 +257,7 @@ class PointDefectDiffusion(Study):
 
         # make sure while loop does not run forever
         ntasks_per_job = math.floor(NTASKS / self.input_yml['processors'])
-        assert ntasks_per_job > 0, f'{NTASKS} processors available. Not enough for a single job ({self.input_yml['processors']})'
+        assert ntasks_per_job > 0, f"{NTASKS} processors available. Not enough for a single job ({self.input_yml['processors']})"
 
         # create/overwrite 
         restart_file = open(self.dir / 'LammpsUtils.restart', 'w')
@@ -563,24 +563,25 @@ class PointDefectDiffusion(Study):
 
             # write diffusivity data
             with open(self.dir / f'{method}_fit.txt', 'w') as df:
-                df.write(f"{'T [K]':<10} {'D [Å2/ns]':<10} {'D [cm2/s]':<10} {'Error [%]':<10}\n")
+                df.write(f"{'T [K]':<10} {'D [Å2/ns]':<15} {'D [cm2/s]':<15} {'Error [%]':<10}\n")
                 for temp in self.sim_ids:
-                    df.write(f"{temp:<10} {self.data[method][temp]['D']:3.2e} {self.data[method][temp]['D']*10e-7:3.2e} {100*self.data[method][temp]['D_err']:2.2f}\n")
+                    df.write(f"{temp:<10} {self.data[method][temp]['D']:15.2e} {self.data[method][temp]['D']*10e-7:15.2e} {100-100*self.data[method][temp]['D_err']:15.2f}\n")
                 df.write('\n')
                 df.write(f"{'Emig [eV]':<10} {'Error [%]':<10}\n")
-                df.write(f"{self.data[method]['Emig']:7.3f} {100*self.data[method]['Emig_err']:2.2f}")
+                df.write(f"{self.data[method]['Emig']:15.3f} {100-100*self.data[method]['Emig_err']:15.2f}")
 
             # plot migration energy fitting
-            if self.data['Emig']:
-                x, y = self.data['arrhenius_data']
+            if self.data[method]['Emig']:
+                x, y = self.data[method]['arrhenius_data']
                 a, b, r2 = self.data[method]['Emig'], self.data[method]['Emig_intercept'], self.data[method]['Emig_err']
-                plt.plot(x, y)
+                plt.plot(x, y, 'o')
                 plt.plot(x, x*a/8.61733e-5+b, '--', label=f"$R^2$={100*r2:2.2f}%")
                 plt.title(f'Emig = {a:1.2f} [eV]')
                 plt.xlabel('1/T [$K^{-1}$]')
                 plt.ylabel('ln(D)')
                 plt.legend()
-                plt.savefig(self.dir / f'{method}_arrhenius.png')
+                plt.savefig(self.dir / f'{method}_arrhenius.png', bbox_inches="tight")
+                plt.close()
 
 
 class LammpsJob:
