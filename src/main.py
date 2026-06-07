@@ -575,7 +575,7 @@ class PointDefectDiffusion(Study):
                 x, y = self.data[method]['arrhenius_data']
                 a, b, r2 = self.data[method]['Emig'], self.data[method]['Emig_intercept'], self.data[method]['Emig_err']
                 plt.plot(x, y, 'o')
-                plt.plot(x, x*a/8.61733e-5+b, '--', label=f"$R^2$={100*r2:2.2f}%")
+                plt.plot(x, [xv*a/8.61733e-5+b for xv in x], '--', label=f"$R^2$={100*r2:2.2f}%")
                 plt.title(f'Emig = {a:1.2f} [eV]')
                 plt.xlabel('1/T [$K^{-1}$]')
                 plt.ylabel('ln(D)')
