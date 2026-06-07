@@ -508,7 +508,7 @@ class PointDefectDiffusion(Study):
                 x = [1/temp for temp in self.sim_ids]
                 y = [math.log(self.data[method][temp]['D']) for temp in self.sim_ids]
                 Emig_int, Emig, r2 = linear_fit(x, y)
-                self.data[method].update({'arrhenius_data': (x, y), 'Emig': float(Emig*8.61733e-5), 'Emig_intercept': float(Emig_int), 'Emig_err': float(r2)})
+                self.data[method].update({'arrhenius_data': (x, y), 'Emig': float(-Emig*8.61733e-5), 'Emig_intercept': float(Emig_int), 'Emig_err': float(r2)})
     
     def save_data(self):
         """Plot curves and write out data."""
@@ -575,7 +575,7 @@ class PointDefectDiffusion(Study):
                 x, y = self.data[method]['arrhenius_data']
                 a, b, r2 = self.data[method]['Emig'], self.data[method]['Emig_intercept'], self.data[method]['Emig_err']
                 plt.plot(x, y, 'o')
-                plt.plot(x, [xv*a/8.61733e-5+b for xv in x], '--', label=f"$R^2$={100*r2:2.2f}%")
+                plt.plot(x, [-xv*a/8.61733e-5+b for xv in x], '--', label=f"$R^2$={100*r2:2.2f}%")
                 plt.title(f'Emig = {a:1.2f} [eV]')
                 plt.xlabel('1/T [$K^{-1}$]')
                 plt.ylabel('ln(D)')
