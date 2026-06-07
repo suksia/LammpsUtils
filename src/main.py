@@ -384,11 +384,11 @@ class PointDefectDiffusion(Study):
                     multiple_frames = True)
 
                 # compute square displacement
-                sq_dis = [0]
+                sq_dis = []
                 frames = [frame for frame in pipeline.frames]
                 ref_def_pos = frames[1].attributes['DefectPosition'][0]
                 
-                defect_tsteps, num_jumps, num_crosses = [0], 0, [0, 0, 0]
+                num_jumps, num_crosses = 0, [0, 0, 0]
                 box_width = [self.input_yml['lattice_const']*size for size in self.input_yml['size']]
                 boundary_jump_tol = 0.80*min(box_width)
 
@@ -422,8 +422,6 @@ class PointDefectDiffusion(Study):
                             
                         # update coord
                         unwrapped_def_pos[i] = def_pos[i] + num_crosses[i]*box_width[i]
-
-                    defect_tsteps.append(t_step)
 
                     sq_dis_val = float(np.linalg.norm(unwrapped_def_pos - ref_def_pos)**2)
                     sq_dis.append(sq_dis_val)
@@ -490,7 +488,7 @@ class PointDefectDiffusion(Study):
         if self.params['thi']:
             thi_i = np.argmin(np.abs(np.array(self.data['t'])-self.params['thi']))
         else:
-            thi_i = -1
+            thi_i = len(self.data['t'])
 
         # fit the data to obtain diffusivities and migration energies
         for method in ['self', 'defect']:
@@ -499,7 +497,7 @@ class PointDefectDiffusion(Study):
             # fit MSD data first to obtain diffusivity
             for temp in self.sim_ids:
                 y = self.data[method][temp]['msd'][tlo_i:thi_i]
-                D, D_int, r2 = linear_fit(x, y)
+                D_int, D, r2 = linear_fit(x, y)
                 self.data[method][temp].update({'D': float(D/6), 'D_intercept': float(D_int), 'D_err': float(r2)})    
 
             # fit diffusivities next to obtain migration energy
@@ -509,7 +507,7 @@ class PointDefectDiffusion(Study):
             else:
                 x = [1/temp for temp in self.sim_ids]
                 y = [math.log(self.data[method][temp]['D']) for temp in self.sim_ids]
-                Emig, Emig_int, r2 = linear_fit(x, y)
+                Emig_int, Emig, r2 = linear_fit(x, y)
                 self.data[method].update({'arrhenius_data': (x, y), 'Emig': float(Emig*8.61733e-5), 'Emig_intercept': float(Emig_int), 'Emig_err': float(r2)})
     
     def save_data(self):
@@ -519,17 +517,17 @@ class PointDefectDiffusion(Study):
             for mem_i in range(self.input_yml['members']):
                 equil_log = LammpsLog(self.state[temp]['dir'] / str(mem_i) / 'equil.log')
                 equil_log.plot_values(save_prefix='equil')
-                
-                for method in ['self', 'defect']:
+
+        for method in ['self', 'defect']:
+            for temp in self.sim_ids:
+                # plot squared displacement curves separate and together
+                for mem_i in range(self.input_yml['members']):
                     plt.plot(self.data['t'], self.data[method][temp][mem_i])
                     plt.xlabel('Time [ns]')
                     plt.ylabel('Squared Displacement [$Å^2$]')
-                    plt.savefig(self.state[temp]['dir'] / f'{method}_sd.png', bbox_inches="tight")
+                    plt.savefig(self.state[temp]['dir'] / str(mem_i) / f'{method}_sd.png', bbox_inches="tight")
                     plt.close()
-
-        for method in ['self', 'defect']:
-            # plot squared displacement curves together
-            for temp in self.sim_ids:
+                
                 for mem_i in range(self.input_yml['members']):
                     plt.plot(self.data['t'], self.data[method][temp][mem_i])
                 plt.xlabel('Time [ns]')
@@ -537,15 +535,13 @@ class PointDefectDiffusion(Study):
                 plt.savefig(self.state[temp]['dir'] / f'{method}_sd.png', bbox_inches="tight")
                 plt.close()
 
-            # save msd data
-            for temp in self.sim_ids:
+                # save msd data
                 with open(self.state[temp]['dir'] / f'{method}_msd.txt', 'w') as msd_file:
                     msd_file.write(f"{'time[ns]':<10} {'msd[Å2]':<10}\n")
                     for i in range(len(self.data['t'])):
                         msd_file.write(f"{self.data['t'][i]:<10} {self.data[method][temp]['msd'][i]:6.3f}\n")
 
-            # plot MSD for each temperature with fitting line
-            for temp in self.sim_ids:
+                # plot MSD for each temperature with fitting line
                 a, b, r2 = self.data[method][temp]['D'], self.data[method][temp]['D_intercept'], self.data[method][temp]['D_err']
                 plt.plot(self.data['t'], self.data[method][temp]['msd'])
                 plt.plot(self.data['t'], [6*a*t+b for t in self.data['t']], '--', label=f"$R^2$={100*r2:2.2f}%")
@@ -572,12 +568,12 @@ class PointDefectDiffusion(Study):
                     df.write(f"{temp:<10} {self.data[method][temp]['D']:3.2e} {self.data[method][temp]['D']*10e-7:3.2e} {100*self.data[method][temp]['D_err']:2.2f}\n")
                 df.write('\n')
                 df.write(f"{'Emig [eV]':<10} {'Error [%]':<10}\n")
-                df.write(f"{self.data['Emig']:7.3f} {100*self.data[method][temp]['Emig_err']:2.2f}")
+                df.write(f"{self.data[method]['Emig']:7.3f} {100*self.data[method]['Emig_err']:2.2f}")
 
             # plot migration energy fitting
             if self.data['Emig']:
                 x, y = self.data['arrhenius_data']
-                a, b, r2 = self.data['Emig'], self.data['Emig_intercept'], self.data['Emig_err']
+                a, b, r2 = self.data[method]['Emig'], self.data[method]['Emig_intercept'], self.data[method]['Emig_err']
                 plt.plot(x, y)
                 plt.plot(x, x*a/8.61733e-5+b, '--', label=f"$R^2$={100*r2:2.2f}%")
                 plt.title(f'Emig = {a:1.2f} [eV]')
