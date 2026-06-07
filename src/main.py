@@ -101,7 +101,11 @@ class PointDefectDiffusion(Study):
                 self.restart: dict[int, list[int]] = {}
                 with open(input_dir/'LammpsUtils.restart', 'r') as rf:
                     for line in rf.readlines():
-                        temp, mem_i = strip_split(line)
+                        line = strip_split(line)
+                        if len(line):
+                            temp, mem_i = int(line[0]), int(line[1])
+                        else:
+                            continue
 
                         if temp not in self.restart.keys():
                             self.restart.update({temp: [mem_i]})
@@ -191,7 +195,7 @@ class PointDefectDiffusion(Study):
             logger.debug(f'Defined input files for temperature {temp}')
 
     def build_directory(self):
-        self.dir.mkdir()
+        self.dir.mkdir(exist_ok=True)
 
         for temp in self.sim_ids:
             subdir = self.dir / f'{temp}K'
@@ -273,10 +277,12 @@ class PointDefectDiffusion(Study):
                 
                 # check if temp/mem_i combo has already been run
                 if self.restart:
-                    if mem_i in self.restart[temp]:
-                        jobs_status[temp][mem_i] = 2
-                        logger.debug(f'LAMMPS has already been run for T={temp} and member={mem_i}. Skipping it')
-                        continue
+                    if temp in self.restart.keys():
+                        if mem_i in self.restart[temp]:
+                            jobs_status[temp][mem_i] = 2
+                            restart_file.write(f'{temp}\t{mem_i}\n')
+                            logger.debug(f'LAMMPS has already been run for T={temp} and member={mem_i}. Skipping it')
+                            continue
 
                 job_dir = self.state[temp]['dir']/str(mem_i)
 
@@ -387,7 +393,7 @@ class PointDefectDiffusion(Study):
 
                 prev_def_pos = copy(ref_def_pos)
                 for frame in frames[1:]:
-                    t_step =  frame.attributes['Timestep']
+                    t_step =  int(frame.attributes['Timestep'])
                     def_pos = frame.attributes['DefectPosition']
 
                     if len(def_pos) > 1:
@@ -419,7 +425,11 @@ class PointDefectDiffusion(Study):
                     sq_dis.append(sq_dis_val)
 
                     with open(job_dir / 'unwrapped.txt', 'a') as unw:
-                        unw.write(f"{t_step*self.input_yml['timestep']/1000:<10} {def_pos:<25} {num_crosses:<20} {unwrapped_def_pos:<25} {sq_dis_val:6.3f}\n")
+                        unw_tstep = float(t_step*self.input_yml['timestep']/1000)
+                        unw_def_pos = def_pos.tolist()
+                        unw_num_crosses = num_crosses.tolist()
+                        unw_unwrapped_def_pos = unwrapped_def_pos.tolist()
+                        unw.write(f"{unw_tstep:<10} {unw_def_pos:<25} {unw_num_crosses:<20} {unw_unwrapped_def_pos:<25} {sq_dis_val:6.3f}\n")
 
                     # create dumps file with vacancy trajectory
                     trj_header_lines = [
