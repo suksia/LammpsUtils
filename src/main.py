@@ -255,6 +255,10 @@ class PointDefectDiffusion(Study):
             seeds.add(random.randint(0, 100000))
         seeds = list(seeds)
 
+        # make sure while loop does not run forever
+        ntasks_per_job = math.floor(NTASKS / self.input_yml['processors'])
+        assert ntasks_per_job > 0, f'{NTASKS} processors available. Not enough for a single job ({self.input_yml['processors']})'
+
         # create/overwrite 
         restart_file = open(self.dir / 'LammpsUtils.restart', 'w')
 
@@ -272,7 +276,7 @@ class PointDefectDiffusion(Study):
                     logger.debug(f'LAMMPS finished for T={temp} and member={mem_i}')
 
             # launch a job if possible
-            if num_running < math.floor(NTASKS / self.input_yml['processors']) and num_running < num_left:
+            if num_running < ntasks_per_job and num_running < num_left:
                 temp, mem_i = check_status(0, return_next=True)
                 
                 # check if temp/mem_i combo has already been run
@@ -466,15 +470,16 @@ class PointDefectDiffusion(Study):
                     self.data['defect'][temp]['msd'] = np.vstack((self.data['defect'][temp]['msd'], sq_dis))
             
         for method in ['self', 'defect']:
-            # compute MSD for temperature
-            msd = []
-            if self.input_yml['members'] > 1:
-                for col in range(len(self.data[method][temp]['msd'][0, :])):
-                    msd.append(float(np.mean(self.data[method][temp]['msd'][:, col])))
-            else:
-                msd = self.data[method][temp]['msd'].tolist()
-                logger.debug('WARNING: Ensemble consists of only 1 member. Do not trust the MSD!')
-            self.data[method][temp]['msd'] = msd
+            for temp in self.sim_ids:
+                # compute MSD for temperature
+                msd = []
+                if self.input_yml['members'] > 1:
+                    for col in range(len(self.data[method][temp]['msd'][0, :])):
+                        msd.append(float(np.mean(self.data[method][temp]['msd'][:, col])))
+                else:
+                    msd = self.data[method][temp]['msd'].tolist()
+                    logger.debug('WARNING: Ensemble consists of only 1 member. Do not trust the MSD!')
+                self.data[method][temp]['msd'] = msd
 
         # define lower/upper bounds for time axis for fitting diffusivities next
         if self.params['tlo']:
