@@ -28,3 +28,27 @@ This study has the following workflow:
 6. Calculate the mean squared displacement and obtain the diffusion constant
 7. Repeat 1-6 for different temperatures
 8. Fit an Arrhenius plot for D(T) and obtain the activation energy
+
+
+
+
+
+
+
+NOTE: ELEMENTS SHOULD BE SPECIFIED IN THE ORDER GIVEN BY THE POTENTIAL
+
+
+state
+|-- sim0
+|   |- mem0
+|   |   |- input_files -> all files required to run LAMMPS for member
+|   |   |- status -> 0 = ready, 1 = running, 2 = finished
+|   |   |- dir -> directory
+|   |   |- any other kwargs that are associated with this member
+
+
+
+|   |- mem1
+|-- sim1
+|
+...

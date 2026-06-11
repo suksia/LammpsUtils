@@ -2,10 +2,7 @@ units metal
 atom_style atomic
 boundary p  p  p
 
-lattice ?lattice? ?lattice_const?
-region lat block 0 ?size_x? 0 ?size_y? 0 ?size_z?
-create_box 1 lat
-create_atoms 1 box
+read_data struct.in
 
 pair_style ?pair_style?
 pair_coeff * * ?potential? ?element?
@@ -16,8 +13,6 @@ neigh_modify delay 0 check yes
 write_dump all custom init.dump id type x y z
 write_dump all custom diffusion.dump id type x y z
 write_dump all custom quench.dump id type x y z
-
-include ?pd_fn?
 
 log init.log
 thermo_style custom step pe

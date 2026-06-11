@@ -53,3 +53,9 @@ def linear_fit(x, y):
     r_squared = 1 - rss/tss
 
     return intercept, slope, r_squared
+
+def sign(x):
+    if x >= 0:
+        return 1
+    else:
+        return -1

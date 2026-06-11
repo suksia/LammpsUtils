@@ -1,0 +1,26 @@
+units metal
+atom_style atomic
+boundary p  p  p
+
+read_data pristine.in
+
+pair_style ?pair_style?
+pair_coeff * * ?potential? ?elements?
+
+neighbor ?skin? bin
+neigh_modify delay 0 check yes
+
+dump 1 all custom 1 relax.dump id type x y z
+
+thermo_style custom step pe
+thermo 1
+
+fix 1 all box/relax iso 0.0
+min_style cg
+minimize 1.0e-10 1.0e-10 1000 10000
+
+delete_atoms group all
+read_data defective.in add merge
+
+unfix 1
+minimize 1.0e-10 1.0e-10 1000 10000

@@ -1,4 +1,0 @@
-region center sphere ?pd_x? ?pd_y? ?pd_z? 0.5 units box
-group vac region center 
-delete_atoms group vac
-group vac delete
