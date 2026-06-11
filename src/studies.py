@@ -275,14 +275,14 @@ class PointDefectInsertion(Study):
         # write the energies out
         with open(self.dir/'energies.out', 'w') as e:
             for mem_i in range(self.input_yml['members']):
-                line = tilps([self.data['pristine_e'][mem_i], self.data['defective_e'][mem_i], self.data['insertion_e'][mem_i]])
+                line = tilps([mem_i, self.data['pristine_e'][mem_i], self.data['defective_e'][mem_i], self.data['insertion_e'][mem_i]])
                 e.write(line+'\n')
         
         # plot energy histogram
         y, x = self.data['insertion_histogram']
-        plt.plot(x[:-1], y)
-        plt.xlabel('Energy [eV]')
-        plt.ylabel('Insertion Energy [eV]')
+        plt.bar(x[:-1], y)
+        plt.xlabel('Insertion Energy [eV]')
+        plt.ylabel('Frequency')
         plt.savefig(self.dir/'insertion_histo.png', bbox_inches="tight")
         plt.close()
 
