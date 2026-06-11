@@ -15,8 +15,8 @@ logging.getLogger("matplotlib").setLevel(logging.FATAL)
 PKG_DIR = Path(__file__).parent.parent
 NTASKS = int(os.environ['SLURM_NTASKS'])
 
-class LammpsJob:
-    def __init__(self, member_dir: Path, num_processors: int, in_filename: str):
+class LmpJob:
+    def __init__(self, member_dir: Path, num_processors: int):
         self.member_dir = member_dir
         self.outfile = open(member_dir / 'lmp.out', 'w')
         self.finished = False
@@ -28,7 +28,7 @@ class LammpsJob:
             '--export=ALL', 
             'lmp', 
             '-in', 
-            in_filename]
+            'main.in']
         
         self.process = subprocess.Popen(self.lammps_cmd, cwd=self.member_dir, stdout=self.outfile, stderr=subprocess.STDOUT)
         logger.debug(f'Launching LAMMPS for T={self.member_dir.parent.name} and member={self.member_dir.name}...')
@@ -52,7 +52,7 @@ class Study:
         self.templates_dir = PKG_DIR / 'templates' / self.__class__.__name__
 
         # containers defined in subclasses
-        self.state: dict = {}
+        self.state = {}
         self.sim_ids = []
         self.data = {}
 
@@ -157,7 +157,7 @@ class Study:
             
             # poll running jobs to update their state if finished
             for sim_i, mem_i in check_status(1, return_all=True):
-                job: LammpsJob = jobs[sim_i][mem_i]
+                job: LmpJob = jobs[sim_i][mem_i]
                 job.poll()
                 if job.finished and not job.counted:
                     state[sim_i][mem_i]['status'] = 2
@@ -183,7 +183,7 @@ class Study:
                     lmpfile.write_to_file(job_dir/fn)
 
                 # run LAMMPS and save process
-                jobs[sim_i][mem_i] = LammpsJob(job_dir, self.params['processors'], state[sim_i][mem_i]['main_fn'])
+                jobs[sim_i][mem_i] = LmpJob(job_dir, self.params['processors'])
                 state[sim_i][mem_i]['status'] = 1
         
         restart_file.close()
@@ -207,8 +207,11 @@ class PointDefectInsertion(Study):
     def init_state(self):
         # setup containers
         self.sim_ids = ['runs']
-        self.state.update({'runs': {mem_i: {'input_files': {}, 'status': 0, 'dir': None, 'main_fn': 'main.in'}} for mem_i in range(self.params['members'])})
-        
+        self.state.update({'runs': {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}})
+
+        # add elements parameter for defining potential
+        self.params.update({'elements': tilps(list(self.input_yml['composition'].keys()))})
+
         # define input files for each member
         for mem_i in range(self.params['members']):
             main_in = LmpInput(file_path=self.templates_dir/'main.in')
@@ -246,6 +249,42 @@ class PointDefectInsertion(Study):
             subdir = runs_dir / str(mem_i)
             subdir.mkdir(exist_ok=True)
             self.state['runs'][mem_i].update({'dir' : subdir})
+
+    def analyze(self):
+        # setup container
+        self.data.update({'pristine_e': [], 'defective_e': [], 'insertion_e': []})
+        
+        # read in potential energy from last thermo output
+        for mem_i in range(self.input_yml['members']):
+            subdir = self.state['runs'][mem_i]['dir']
+
+            pris_log = LmpLog(file_path=subdir/'pristine.log')
+            pris_e = pris_log.data['PotEng'][-1]
+
+            def_log = LmpLog(file_path=subdir/'defective.log')
+            def_e = def_log.data['PotEng'][-1]
+
+            self.data['pristine_e'].append(pris_e)
+            self.data['defective_e'].append(def_e)
+            self.data['insertion_e'].append(pris_e-def_e)
+
+        # bin energy data
+        self.data.update({'insertion_histogram': np.histogram(self.data['insertion_e'], bins=25)})
+    
+    def save_data(self):
+        # write the energies out
+        with open(self.dir/'energies.out', 'w') as e:
+            for mem_i in range(self.input_yml['members']):
+                line = tilps([self.data['pristine_e'][mem_i], self.data['defective_e'][mem_i], self.data['insertion_e'][mem_i]])
+                e.write(line+'\n')
+        
+        # plot energy histogram
+        y, x = self.data['insertion_histogram']
+        plt.plot(x[:-1], y)
+        plt.xlabel('Energy [eV]')
+        plt.ylabel('Insertion Energy [eV]')
+        plt.savefig(self.dir/'insertion_histo.png', bbox_inches="tight")
+        plt.close()
 
 @register_study
 class PointDefectDiffusion(Study):
@@ -336,3 +375,13 @@ class PointDefectDiffusion(Study):
     def run_lammps(self):
         for conf_i in range(self.input_yml['configurations']):
             self.run_lammps(self.state[conf_i])
+
+    def analyze(self):
+        # compute Emig for each configuration
+
+        # 1. Extract squared displacement curves from each member
+        # 2. Compute MSD for each temperature
+        # 3. Fit MSD to get D, fit D to get Emig for a temperature
+        # 4. Save Emig and repeat 1-3 for each configuration
+
+        self.data.update()

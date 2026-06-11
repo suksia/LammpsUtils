@@ -39,7 +39,7 @@ class LmpFile:
     def write_to_file(self, write_path: Path):
         with open(write_path, 'w') as d:
             for l in self.lines:
-                d.write(l)
+                d.write(l+'\n')
         self.last_write_path = deepcopy(write_path)
         logger.debug(f'{self.__class__.__name__}: wrote lines to {write_path}')
 

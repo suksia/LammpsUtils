@@ -12,6 +12,7 @@ neigh_modify delay 0 check yes
 
 dump 1 all custom 1 relax.dump id type x y z
 
+log pristine.log
 thermo_style custom step pe
 thermo 1
 
@@ -21,6 +22,8 @@ minimize 1.0e-10 1.0e-10 1000 10000
 
 delete_atoms group all
 read_data defective.in add merge
+
+log defective.log
 
 unfix 1
 minimize 1.0e-10 1.0e-10 1000 10000
