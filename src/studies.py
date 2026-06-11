@@ -269,18 +269,18 @@ class PointDefectInsertion(Study):
             self.data['insertion_e'].append(pris_e-def_e)
 
         # bin energy data
-        self.data.update({'insertion_histogram': np.histogram(self.data['insertion_e'], bins=25)})
+        self.data.update({'insertion_histogram': np.histogram(self.data['insertion_e'], bins=40)})
     
     def save_data(self):
         # write the energies out
         with open(self.dir/'energies.out', 'w') as e:
             for mem_i in range(self.input_yml['members']):
-                line = tilps([mem_i, self.data['pristine_e'][mem_i], self.data['defective_e'][mem_i], self.data['insertion_e'][mem_i]])
+                line = f"{mem_i:<5} {self.data['pristine_e'][mem_i]:<15.5f} {self.data['defective_e'][mem_i]:<15.5f} {self.data['insertion_e'][mem_i]:<15.5f}"
                 e.write(line+'\n')
         
         # plot energy histogram
         y, x = self.data['insertion_histogram']
-        plt.bar(x[:-1], y)
+        plt.bar(x[:-1], y, linewidth=1, edgecolor='navy', width=np.diff(x))
         plt.xlabel('Insertion Energy [eV]')
         plt.ylabel('Frequency')
         plt.savefig(self.dir/'insertion_histo.png', bbox_inches="tight")

@@ -175,26 +175,6 @@ class LmpStructure(LmpFile):
             self.lines.append(f"{i}  {self.lmp_types[at_dict['species']]}  {at_dict['position'][0]:12.8f}  {at_dict['position'][1]:12.8f}  {at_dict['position'][2]:12.8f}")
 
         super().write_to_file(write_path)
-
-    def get_defect_insertion_position(self, defect_type: str, atom_pos: np.ndarray, defect_orient: str):
-        """Determine the position of where to insert the point defect based on its properties like type and orientation."""
-        if defect_type == 'vac':
-            return atom_pos
-        
-        # interstitials have extra degrees of freedom
-        if defect_type == 'crowd':
-            if defect_orient == '111':
-                return atom_pos + self.lattice_const/4
-
-        elif defect_type == 'db':
-            if defect_orient == '100':
-                spacing = np.array([self.lattice_const/4, 0, 0])
-            return (atom_pos-spacing, atom_pos+spacing)
-
-    def get_atom_by_position(self, atom_pos: np.ndarray):
-        for atom_i, atom_dict in self.atoms.items():
-            if np.isclose(atom_dict['position'], atom_pos):
-                return atom_i, atom_dict
             
     def insert_point_defect(self, defect_type: str, defect_species: str, defect_orientation: str):
         """Inserts a point defect at or near the center of the supercell."""
@@ -227,6 +207,8 @@ class LmpStructure(LmpFile):
 
             if defect_orientation == '100':
                 spacing = np.array([self.lattice_const/4, 0, 0])
+            elif defect_orientation == '111':
+                spacing = np.array([self.lattice_const/4, self.lattice_const/4, self.lattice_const/4])
             
             ref_at_pos, int_pos = ref_at_dict['position'] - spacing, ref_at_dict['position'] + spacing
 
