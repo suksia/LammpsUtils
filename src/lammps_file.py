@@ -36,10 +36,14 @@ class LmpFile:
         for l in contents_str.split('\n'):
             self.lines.append(l)
 
-    def write_to_file(self, write_path: Path):
+    def write_to_file(self, write_path: Path, append_newline=False):
+        if append_newline:
+            lines = [l+'\n' for l in self.lines]
+        else:
+            lines = self.lines
         with open(write_path, 'w') as d:
-            for l in self.lines:
-                d.write(l+'\n')
+            for l in lines:
+                d.write(l)
         self.last_write_path = deepcopy(write_path)
         logger.debug(f'{self.__class__.__name__}: wrote lines to {write_path}')
 
@@ -175,7 +179,7 @@ class LmpStructure(LmpFile):
             i += 1
             self.lines.append(f"{i}  {self.lmp_types[at_dict['species']]}  {at_dict['position'][0]:12.8f}  {at_dict['position'][1]:12.8f}  {at_dict['position'][2]:12.8f}")
 
-        super().write_to_file(write_path)
+        super().write_to_file(write_path, append_newline=True)
             
     def insert_point_defect(self, defect_type: str, defect_species: str, defect_orientation: str):
         """Inserts a point defect at or near the center of the supercell."""
@@ -336,6 +340,9 @@ class LmpDump(LmpFile):
                     if k in frame.keys():
                         frame[k].astype(np.float32)
 
+        # save last frame
+        self.frames[timestep] = frame
+
     def write_structure_file(self, write_path: Path, species: list[str], timestep = None):
         if timestep is None:
             timestep = list(self.frames.keys())[-1]
@@ -352,13 +359,13 @@ class LmpDump(LmpFile):
         lines.append(f"Generated from a dump file at {self.last_read_path}.\n")
         lines.append(f"{frame['num_atoms']} atoms")
         lines.append(f'{len(species)} atom types\n')
-        lines.append(f'{frame['box']['xlo']:9.8f}  {frame['box']['xhi']:11.8f}  xlo xhi')
-        lines.append(f'{frame['box']['ylo']:9.8f}  {frame['box']['yhi']:11.8f}  ylo yhi')
-        lines.append(f'{frame['box']['zlo']:9.8f}  {frame['box']['zhi']:11.8f}  zlo zhi')
+        lines.append(f"{frame['box']['xlo']:9.8f}  {frame['box']['xhi']:11.8f}  xlo xhi")
+        lines.append(f"{frame['box']['ylo']:9.8f}  {frame['box']['yhi']:11.8f}  ylo yhi")
+        lines.append(f"{frame['box']['zlo']:9.8f}  {frame['box']['zhi']:11.8f}  zlo zhi")
         lines.append('Masses\n')
         for t, el in enumerate(species):
-            self.lines.append(f'{t}  {masses[el]:3.4f}  # {el}')
-        self.lines.append('\nAtoms\n')
+            self.lines.append(f"{t}  {masses[el]:3.4f}  # {el}")
+        self.lines.append("\nAtoms\n")
         for a in range(frame['num_atoms']):
             self.lines.append(f"{frame['id'][a]}  {frame['type'][a]}  {frame['position'][a][0]:12.8f}  {frame['position'][a][1]:12.8f}  {frame['position'][a][2]:12.8f}")
 

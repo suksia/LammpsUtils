@@ -218,7 +218,7 @@ class GenerateConfigurations(Study):
             'equil': unprefix(self.input_yml['equil']),
             'mc_freq': unprefix(self.input_yml['mc'][0]),
             'mc_attempts': unprefix(self.input_yml['mc'][1]),
-            'mc_thermo_freq': min(1, int(unprefix(0.25*self.input_yml['mc'][1]))),
+            'mc_thermo_freq': max(1, int(unprefix(0.25*self.input_yml['mc'][1]))),
             'mc': unprefix(self.input_yml['mc'][2]),
             'snapshot': unprefix(self.input_yml['snapshot'])
         })
@@ -234,7 +234,7 @@ class GenerateConfigurations(Study):
             main_in.add_params(self.params)
 
             struct_in = LmpStructure(self.params)
-            self.state['runs']['mem_i']['input_files'].update({'config.in': struct_in, 'main.in': main_in})
+            self.state['runs'][mem_i]['input_files'].update({'config.in': struct_in, 'main.in': main_in})
 
     def build_directory(self):
         super().build_directory()
