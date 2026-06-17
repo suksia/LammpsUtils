@@ -13,7 +13,10 @@ logger = logging.getLogger('LammpsUtils')
 logging.getLogger("matplotlib").setLevel(logging.FATAL)
 
 PKG_DIR = Path(__file__).parent.parent
-NTASKS = int(os.environ['SLURM_NTASKS'])
+try:
+    NTASKS = int(os.environ['SLURM_NTASKS'])
+except:
+    NTASKS = 1
 
 class LmpJob:
     def __init__(self, member_dir: Path, num_processors: int):
@@ -201,6 +204,60 @@ def register_study(cls):
     """Registry enrollment so that Study subclasses can be instantiated by string name."""
     study_registry[cls.__name__] = cls
     return cls
+
+@register_study
+class GenerateConfigurations(Study):
+    def init_state(self):
+        self.sim_ids = ['runs']
+        self.state.update({'runs': {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}})
+        
+        # update params common to all members/configurations
+        self.params.update({
+            'elements': tilps(list(self.input_yml['composition'].keys())),
+            'temp': self.input_yml['temperature'],
+            'equil': unprefix(self.input_yml['equil']),
+            'mc_freq': unprefix(self.input_yml['mc'][0]),
+            'mc_attempts': unprefix(self.input_yml['mc'][1]),
+            'mc_thermo_freq': min(1, int(unprefix(0.25*self.input_yml['mc'][1]))),
+            'mc': unprefix(self.input_yml['mc'][2]),
+            'snapshot': unprefix(self.input_yml['snapshot'])
+        })
+
+        # define seeds for atom/swap RNG 
+        mc_seeds = create_seeds(self.params['members'])
+
+        # generate configurations and add input files
+        for mem_i in range(self.params['members']):
+            self.params.update({'mc_seed': mc_seeds[mem_i]})
+            
+            main_in = LmpInput(file_path=self.templates_dir/'main.in')
+            main_in.add_params(self.params)
+
+            struct_in = LmpStructure(self.params)
+            self.state['runs']['mem_i']['input_files'].update({'config.in': struct_in, 'main.in': main_in})
+
+    def build_directory(self):
+        super().build_directory()
+        self.dir.mkdir(exist_ok=True)
+        
+        runs_dir: Path = self.dir / 'runs'
+        runs_dir.mkdir(exist_ok=True)
+
+        for mem_i in range(self.input_yml['members']):
+            subdir = runs_dir / str(mem_i)
+            subdir.mkdir(exist_ok=True)
+            self.state['runs'][mem_i].update({'dir' : subdir})
+
+        self.dataset_dir = self.dir / 'dataset'
+        self.dataset_dir.mkdir(exist_ok=True)
+
+    def run_lammps(self):
+        super().run_lammps(self.state)
+
+        # convert final configuration dumps into LAMMPS input files and save to dataset folder
+        for mem_i in range(self.params['members']):
+            dump = LmpDump(file_path=self.state['runs'][mem_i]['dir']/'final.dump')
+            dump.write_structure_file(self.dataset_dir/f'config_{mem_i}.lmp', [el for el in self.input_yml['composition'].keys()])
 
 @register_study
 class PointDefectInsertion(Study):

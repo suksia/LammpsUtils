@@ -1,5 +1,16 @@
 The point of this package is to automate some common studies performed in LAMMPS, primarily focused on metallic systems.
 
+## `GenerateConfigurations`
+
+Scope: cubic binary concentrated alloys
+
+This study is designed to generate a dataset of ready-to-use configurations in an ensemble representing a concentrated substitutional alloy. It consists of the the following workflow
+1. Sample a random configuration
+2. Energy minimize until internal pressure is relieved
+3. Equilibrate to the target temperature
+4. Perform a hybrid Monte Carlo + molecular dynamics run to approach a real configuration
+5. Quench the final configuration
+
 ## `Diffusion`
 
 Scope: cubic elemental metals

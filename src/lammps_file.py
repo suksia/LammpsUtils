@@ -136,6 +136,7 @@ class LmpStructure(LmpFile):
             self.at_composition.update({el: round(self.num_atoms*conc/100)})
 
         # select random elements and add or remove single atoms until the total is correct
+        random.seed()
         while sum(self.at_composition.values()) != self.num_atoms:
             rand_el_idx = random.randint(0, len(self.composition)-1)
             el = list(self.composition.keys())[rand_el_idx]
@@ -206,15 +207,18 @@ class LmpStructure(LmpFile):
             self.num_atoms += 1
 
             if defect_orientation == '100':
-                spacing = np.array([self.lattice_const/4, 0, 0])
+                spacing = np.array([self.lattice_const/6, 0, 0])
             elif defect_orientation == '111':
-                spacing = np.array([self.lattice_const/4, self.lattice_const/4, self.lattice_const/4])
+                spacing = np.array([self.lattice_const/6, self.lattice_const/6, self.lattice_const/6])
             
             ref_at_pos, int_pos = ref_at_dict['position'] - spacing, ref_at_dict['position'] + spacing
 
             self.atoms[ref_pos_i]['position'] = ref_at_pos
             self.atoms.update({self.num_atoms-1: {'position': int_pos, 'species': defect_species, 'type': self.lmp_types[defect_species]}})
-        
+    
+    def compute_warren_cowley(self):
+        raise NotImplementedError
+
 class LmpLog:
     def __init__(self, file_path: Path):
         self.path = file_path
@@ -275,3 +279,93 @@ class LmpLog:
             plt.ylabel(y_lab)
             plt.savefig(self.path.parent / f'{save_prefix}{y_lab}.png')
             plt.close()
+
+class LmpDump(LmpFile):
+    def __init__(self, file_path=None, content_str=None):
+        super().__init__(file_path, content_str)
+        
+        # dictionary mapping timestep to a dictionary of numpy arrays where each atom corresponds to the same index 
+        self.frames: dict[int, dict[str, np.ndarray]] = {}
+
+        timestep = None
+        for l, line in enumerate(self.lines):
+            # save previous frame and initialize a new one
+            if line.strip() == 'ITEM: TIMESTEP':
+                if timestep is not None:
+                    self.frames[timestep] = frame
+                frame = {}
+                timestep = strip_split(self.lines[l+1], as_type=int)[0]
+
+            # define number of atoms
+            elif line.strip() == 'ITEM: NUMBER OF ATOMS':
+                frame['num_atoms'] = strip_split(self.lines[l+1], as_type=int)[0]
+            
+            # get box size (it will change from fix box/relax)
+            elif line.strip() == 'ITEM: BOX BOUNDS pp pp pp':
+                xlo, xhi = strip_split(self.lines[l+1], as_type=float)
+                ylo, yhi = strip_split(self.lines[l+2], as_type=float)
+                zlo, zhi = strip_split(self.lines[l+3], as_type=float)
+
+                frame['box'] = {'xlo': xlo, 'xhi': xhi, 'ylo': ylo, 'yhi': yhi, 'zlo': xlo, 'zhi': xhi}
+                frame['boxsize'] = np.array([xhi - xlo, yhi - ylo, zhi - zlo])
+
+            # read in per-atom data
+            elif 'ITEM: ATOMS' in line.strip():
+                # initialize data containers
+                column_names = strip_split(re.sub('ITEM: ATOMS', '', line.strip()))
+                frame.update({key: np.zeros(frame['num_atoms']) for key in column_names})
+
+                # read in values for each atom and populate containers
+                for a, atom in enumerate(self.lines[l+1:l+1+frame['num_atoms']]):
+                    for v, val in enumerate(strip_split(atom, as_type=float)):
+                        frame[column_names[v]][a] = val
+                
+                # combine related data like x, y, z -> (x, y, z)
+                if set(['x', 'y', 'z']).issubset(column_names):
+                    frame['position'] = np.column_stack((frame['x'], frame['y'], frame['z']))
+                    frame.pop('x')
+                    frame.pop('y')
+                    frame.pop('z')
+                
+                # update data type of arrays
+                if 'id' in frame.keys():
+                    frame['id'].astype(np.int32)
+                if 'type' in frame.keys():
+                    frame['type'].astype(np.int8)
+                for k in ['x', 'y', 'z', 'position']:
+                    if k in frame.keys():
+                        frame[k].astype(np.float32)
+
+    def write_structure_file(self, write_path: Path, species: list[str], timestep = None):
+        if timestep is None:
+            timestep = list(self.frames.keys())[-1]
+        else:
+            timestep = int(timestep)
+            if timestep not in self.frames.keys():
+                raise KeyError(f'Dump file at {self.last_read_path} does not have the timestep {timestep}')
+        
+        frame = self.frames[timestep]
+        if not set(['type', 'id', 'position']).issubset(frame.keys()):
+            raise KeyError(f'Dump file at {self.last_read_path} must at least have the atom type, id, x, y, z coords to define a valid structure input file')
+        
+        lines = []
+        lines.append(f"Generated from a dump file at {self.last_read_path}.\n")
+        lines.append(f"{frame['num_atoms']} atoms")
+        lines.append(f'{len(species)} atom types\n')
+        lines.append(f'{frame['box']['xlo']:9.8f}  {frame['box']['xhi']:11.8f}  xlo xhi')
+        lines.append(f'{frame['box']['ylo']:9.8f}  {frame['box']['yhi']:11.8f}  ylo yhi')
+        lines.append(f'{frame['box']['zlo']:9.8f}  {frame['box']['zhi']:11.8f}  zlo zhi')
+        lines.append('Masses\n')
+        for t, el in enumerate(species):
+            self.lines.append(f'{t}  {masses[el]:3.4f}  # {el}')
+        self.lines.append('\nAtoms\n')
+        for a in range(frame['num_atoms']):
+            self.lines.append(f"{frame['id'][a]}  {frame['type'][a]}  {frame['position'][a][0]:12.8f}  {frame['position'][a][1]:12.8f}  {frame['position'][a][2]:12.8f}")
+
+        with open(write_path, 'w') as f:
+            f.writelines(lines)
+
+        logger.debug(f'{self.__class__.__name__}: wrote structure to {write_path}')
+
+    def compute_warren_cowley(self):
+        raise NotImplementedError

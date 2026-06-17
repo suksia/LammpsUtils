@@ -33,7 +33,7 @@ def main():
     # build directory tree and copy in input file
     study.build_directory()
     logger.debug(f'Built directory tree at {study.dir}')
-    shutil.copy(input_fp, study.dir)
+    #shutil.copy(input_fp, study.dir)
 
     # run lammps
     logger.debug(f'Starting LAMMPS simulations...')

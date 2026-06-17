@@ -1,0 +1,80 @@
+units metal
+atom_style atomic
+boundary p  p  p
+
+read_data config.in
+
+pair_style ?pair_style?
+pair_coeff * * ?potential? ?elements?
+
+neighbor ?skin? bin
+neigh_modify delay 0 check yes
+
+# -------- Energy minimize -------- #
+
+fix 1 all box/relax iso 0.0
+
+log relax.log
+thermo_style custom step pe press vol
+thermo 1
+
+min_style cg
+minimize 1.0e-10 1.0e-10 1000 10000
+
+unfix 1
+
+# --------- Equilibration --------- #
+
+neigh_modify delay 10 check yes
+
+reset_timestep 0
+timestep ?timestep?
+
+fix 1 all nve
+fix 2 all langevin ?temp? ?temp? 100 12345
+fix 3 all momentum 100 linear 1 1 1
+
+log equil.log
+thermo_style custom step etotal temp
+thermo 1000
+
+velocity all create ?temp? 23456
+
+run ?equil?
+
+# ------------- MC+MD ------------- #
+
+reset_timestep 0
+
+fix mc all atom/swap ?mc_freq? ?mc_attempts? ?mc_seed? ?temp? types 1 2
+
+variable acc_ratio equal "ternary(f_mc[1] > 0, f_mc[2]/f_mc[1], 0.0)"
+
+log mc.log
+thermo_style custom step pe press v_acc_ratio
+thermo ?mc_thermo_freq?
+
+dump 1 all custom ?snapshot? mc.dump id type x y z
+
+run ?mc?
+
+unfix 1
+unfix 2
+unfix 3
+unfix mc
+undump 1
+
+# ------------ Quench ------------- #
+
+reset_timestep 0
+
+neigh_modify delay 0 check yes
+
+log quench.log
+thermo_style custom step pe press vol
+thermo 1
+
+min_style cg
+minimize 1.0e-10 1.0e-10 1000 10000
+
+write_dump all custom final.dump id type x y z

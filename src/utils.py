@@ -1,19 +1,16 @@
+import random
 from pathlib import Path
 import numpy as np
 from numpy.polynomial import Polynomial
 
-def strip_split(s: str, sep=None, item_type=None):
-    """Strip a string of whitespace and split it apart given a separator character."""
+def strip_split(s: str, sep=None, as_type=str):
+    """Strip a string of any whitespace or newline characters, split it apart with a separator character, and convert items to given type."""
     s = s.strip()
     s = s.split(sep)
-    if item_type is int:
-        return [int(x) for x in s]
-    elif item_type is float:
-        return [float(x) for x in s]
-    elif item_type is None:
-        return s
-    else:
-        raise ValueError(f'[{item_type}] Invalid item type. Choose None, int, or float')
+    try:
+        return [as_type(x) for x in s]
+    except:
+        raise ValueError(f'Could not cast all items in {s} to type {as_type}')
 
 def tilps(list_vals: list, sep: str = ' '):
     """Inverse of strip(), where a list of strings are glued back together into a single string."""
@@ -33,17 +30,22 @@ def next_path(path: Path):
             return new_path
     raise ValueError(f'[{path}] Study file path index limit reached (1000)')
 
-def unprefix(int_prefix: str) -> int:
-    int_prefix = str(int_prefix)
-    val, prefix = int(int_prefix[:-1]), int_prefix[-1]
-    if prefix == 'k':
-        return val*1000
-    elif prefix == 'M':
-        return val*1000000
+def unprefix(prefixed_num, as_type=int):
+    """Convert a number written with an S.I. prefix to its actual form (e.g., 173k=173000, 1.5M=1500000)."""
+    if type(prefixed_num) == str:
+        val, prefix = float(prefixed_num[:-1]), prefixed_num[-1]
     else:
-        return int(int_prefix)
+        return as_type(prefixed_num)
+    
+    if prefix == 'k':
+        return as_type(val*1000)
+    elif prefix == 'M':
+        return as_type(val*1000000)
+    else:
+        raise ValueError(f'Unrecognized prefix {prefix}')
     
 def linear_fit(x, y):
+    """Fit a line to a dataset and return its parameters."""
     fit, fit_data = Polynomial.fit(x, y, 1, full=True)
     intercept, slope = fit.convert().coef
 
@@ -55,7 +57,19 @@ def linear_fit(x, y):
     return intercept, slope, r_squared
 
 def sign(x):
+    """Determine the sign of a number."""
     if x >= 0:
         return 1
     else:
         return -1
+
+def create_seeds(num_seeds: int = None, bounds=(0, 1000000)):
+    """Create a seed or a list of unique seeds with an integer value in the provided bounds."""
+    random.seed()
+    if num_seeds is None:
+        return random.randint(bounds[0], bounds[1])
+     
+    seeds = {}
+    while len(seeds) < num_seeds:
+        seeds.update({random.randint(bounds[0], bounds[1]): None})
+    return list(seeds.keys())
