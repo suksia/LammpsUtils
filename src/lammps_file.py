@@ -2,7 +2,7 @@ import logging, re, random
 from pathlib import Path
 from copy import deepcopy
 import numpy as np
-from utils import sign, strip_split
+from utils import *
 from masses import masses
 import matplotlib.pyplot as plt
 
@@ -10,15 +10,9 @@ logger = logging.getLogger('LammpsUtils')
 logging.getLogger("matplotlib").setLevel(logging.FATAL)
 
 class LmpFile:
-    def __init__(self, file_path: Path = None, content_str: str = None):
-        self.fp = file_path
-        if self.fp:
-            self.fn = self.fp.name
-        else:
-            self.fn = None
-        
-        self.lines = []
-        self.last_read_path = None
+    def __init__(self, file_path: Path = None, content_str: str = None):      
+        self.lines: list[str] = []
+        self.last_read_path = file_path
         self.last_write_path = None
 
         if file_path:
@@ -29,6 +23,7 @@ class LmpFile:
     def load_from_file(self, read_path: Path):
         with open(read_path, 'r') as f:
             self.lines = f.readlines()
+
         self.last_read_path = deepcopy(read_path)
         logger.debug(f'{self.__class__.__name__}: read lines from {self.last_read_path}')
 
@@ -36,14 +31,15 @@ class LmpFile:
         for l in contents_str.split('\n'):
             self.lines.append(l)
 
-    def write_to_file(self, write_path: Path, append_newline=False):
-        if append_newline:
-            lines = [l+'\n' for l in self.lines]
-        else:
+    def write_to_file(self, write_path: Path, append_newline=False, lines=None):
+        if lines is None:
             lines = self.lines
+        if append_newline:
+            lines = [l+'\n' for l in lines]
+
         with open(write_path, 'w') as d:
-            for l in lines:
-                d.write(l)
+            d.writelines(lines)
+            
         self.last_write_path = deepcopy(write_path)
         logger.debug(f'{self.__class__.__name__}: wrote lines to {write_path}')
 
@@ -66,37 +62,72 @@ class LmpInput(LmpFile):
 
 class LmpStructure(LmpFile):
     """Input structure data file for LAMMPS which is a randomized bcc/fcc lattice of elements."""
-    def __init__(self, struct_params: dict):
-        super().__init__()
-        self.fn = 'struct.in'
+    def __init__(self, params: dict, file_path: Path = None):
+        # attributes required to fully define the structure
+        self.ids: np.ndarray = None
+        self.types: np.ndarray = None
+        self.positions: np.ndarray = None
 
-        self.lattice = struct_params['lattice']
-        self.lattice_const = struct_params['lattice_const']
-        self.size = struct_params['size']
+        self.size = []
+        self.box = {}
+        self.boxsize = np.array(3)
+
+        self.lattice: str = ''
+        self.lattice_const = 0.0
+        self.num_types = 0
+        self.num_atoms = 0
+        self.composition: dict = {}
+        self.composition_str = ''
+        
+        # dictionary mapping element species to LAMMPS atom type
+        self.species_to_type = {}
+        
+        # initializes some attributes and reads in contents if a file path was provided
+        super().__init__(file_path=file_path)
+
+        # build structure from scratch as a random disorded alloy (reduces to bulk metal for single component)
+        if file_path is None:
+            self.create_lattice(params)
+    
+    def create_lattice(self, params):
+        """Constructs a random disordered cubic alloy."""
+        # read in parameters
+        self.lattice = params['lattice']
+        self.lattice_const = params['lattice_const']
+        self.size = params['size']
+
+        self.box = {
+            'xlo': 0.0,
+            'xhi': self.lattice_const*self.size[0],
+            'ylo': 0.0,
+            'yhi': self.lattice_const*self.size[1],
+            'zlo': 0.0,
+            'zhi': self.lattice_const*self.size[2],
+        }
+
+        for i, d in enumerate(['x', 'y', 'z']):
+            self.boxsize[i] = self.box[f'{d}hi']-self.box[f'{d}lo']
 
         # composition in terms of at%
-        self.composition: dict = struct_params['composition']
-        self.composition_str = ''
+        self.composition = params['composition']
+
+        tot_conc = sum(self.composition.values())
+        if tot_conc != 100.0:
+            raise ValueError(f'Combined all concentrations must sum exactly to 100. Calculated {tot_conc}')
+        
         for el, conc in self.composition.items():
             self.composition_str += f'{el}{int(conc)}-'
         self.composition_str = self.composition_str[:-1]
 
-        # composition in terms of number of atoms for each species
-        self.at_composition = {}
+        # composition in terms of number of atoms for each species (determined precisely later)
+        at_composition = {}
 
-        # dictionary items = species, type, position 
-        self.atoms: dict[int, dict[str, str|int|np.ndarray]] = {}
-        self.num_atoms = None
-        
-        self.lmp_types = {}
+        # enumerate LAMMPS atom types
+        self.species_to_type = {}
         for i, el in enumerate(self.composition.keys()):
             i += 1
-            self.lmp_types.update({el: i})
-
-        self.create_lattice()
-    
-    def create_lattice(self):
-        """Defines a cubic crystal lattice as a dictionary with site positions, species, and LAMMPS types."""
+            self.species_to_type.update({el: i})
+        
         # enumerate all translation vectors
         transv = []
         for i in range(self.size[0]):
@@ -129,24 +160,25 @@ class LmpStructure(LmpFile):
             if append:
                 upos.append(self.lattice_const*p)
 
-        self.num_atoms = len(upos)
+        self.positions = np.array(upos, dtype=np.float32)
+        self.num_atoms = len(self.positions)
+
+        # initialize ids and types arrays
+        self.types = np.zeros(self.num_atoms, dtype=np.int8)
+        self.ids = np.arange(1, self.num_atoms+1, dtype=np.int32)
 
         # determine number atoms to be assigned to each element
-        tot_conc = sum(self.composition.values())
-        if tot_conc != 100.0:
-            raise ValueError(f'Combined all concentrations must sum exactly to 100. Calculated {tot_conc}')
-
         for el, conc in self.composition.items():
-            self.at_composition.update({el: round(self.num_atoms*conc/100)})
+            at_composition.update({el: round(self.num_atoms*conc/100)})
 
         # select random elements and add or remove single atoms until the total is correct
         random.seed()
-        while sum(self.at_composition.values()) != self.num_atoms:
+        while sum(at_composition.values()) != self.num_atoms:
             rand_el_idx = random.randint(0, len(self.composition)-1)
             el = list(self.composition.keys())[rand_el_idx]
 
-            val = sum(self.at_composition.values()) - self.num_atoms
-            self.at_composition[el] -= sign(val)
+            val = sum(at_composition.values()) - self.num_atoms
+            at_composition[el] -= sign(val)
 
         # generate a set of indices corresponding to random positions
         rand_pos_idx = {}
@@ -154,74 +186,141 @@ class LmpStructure(LmpFile):
             rand_pos_idx.update({random.randint(0, self.num_atoms-1): None})
         rand_pos_idx = list(rand_pos_idx)
 
-        # assign elements to random positions
+        # assign elements to random positions by setting the types
         i = 0
-        for el, n_at in self.at_composition.items():
+        for el, n_at in at_composition.items():
             for j in range(n_at):
-                rand_i = rand_pos_idx[i]
-                self.atoms.update({i: {'position': upos[rand_i], 'species': el, 'type': self.lmp_types[el]}})
+                self.ids[rand_pos_idx[i]] = self.species_to_type[el]
                 i += 1
 
+    def load_from_file(self):
+        # header comment metadata: bcc 3.07 3x3x3 W43-Mo57
+        header_comment = strip_split(self.lines[0])
+
+        self.lattice = header_comment[0]
+        self.lattice_const = float(header_comment[1])
+        self.size = strip_split(header_comment[2], 'x', as_type=int)
+        
+        self.composition_str = strip_split(header_comment[3], sep='-')
+        for c in self.composition_str:
+            if c[:2] not in masses.keys():
+                el = c[0]
+            else:
+                el = c[:2]
+            self.composition[el] = float(c[2:])
+
+        # header lines
+        for l, line in enumerate(self.lines):
+            line = line.split()
+            if 'atoms' in line:
+                self.num_atoms = int(strip_split(line)[0])
+            elif 'atom types' in line:
+                self.num_types = int(strip_split(line)[0])
+            elif 'lo' in line:
+                line_params = strip_split(line)
+                d = line_params[-1][0]
+                self.box.update({
+                    f'{d}lo': float(line_params[0]),
+                    f'{d}hi': float(line_params[1]),
+                })
+
+        for i, d in enumerate(['x', 'y', 'z']):
+            self.boxsize[i] = self.box[f'{d}hi']-self.box[f'{d}lo']        
+
+        eoh_l = l
+
+        # body lines
+        self.ids = np.zeros(self.num_atoms, dtype=np.int32)
+        self.types = np.zeros(self.num_atoms, dtype=np.int8)
+        self.positions = np.zeros((self.num_atoms, 3), dtype=np.float32)
+
+        for lo, line in enumerate(self.lines[eoh_l:]):
+            line = line.split()
+            lo += 2
+
+            if skip:
+                skip -= 1
+                continue
+
+            if line == 'Masses':
+                for iline in self.lines[lo:lo+self.num_types]:
+                    iline_params = iline.split()
+                    self.species_to_type[iline_params[-1]: int(iline_params[0])]
+                skip = 2 + self.num_types
+
+            elif line == 'Atoms':
+                for li, inner_line in enumerate(self.lines[lo+2:lo+2+self.num_atoms]):
+                    inner_line_params = inner_line.split()
+                    self.ids[li] = int(inner_line_params[0])
+                    self.types[li] = int(inner_line_params[1])
+                    self.positions[li] = np.array([float(val) for val in inner_line_params[2:]])
+                skip = 2 + self.num_atoms
+
     def write_to_file(self, write_path):
-        # write lines for a LAMMPS input file
         self.lines = []
-        self.lines.append(f'{self.size[0]}x{self.size[1]}x{self.size[2]} {self.lattice} {self.composition_str}\n')
-        self.lines.append(f'{self.num_atoms} atoms')
-        self.lines.append(f'{len(self.composition)} atom types\n')
-        self.lines.append(f'{0.0:9.8f}  {self.lattice_const*self.size[0]:11.8f}  xlo xhi')
-        self.lines.append(f'{0.0:9.8f}  {self.lattice_const*self.size[1]:11.8f}  ylo yhi')
-        self.lines.append(f'{0.0:9.8f}  {self.lattice_const*self.size[2]:11.8f}  zlo zhi\n')
+        self.lines.append(f"{self.lattice}  {self.lattice_const}  {self.size[0]}x{self.size[1]}x{self.size[2]}  {self.composition_str}\n")
+        self.lines.append(f"{self.num_atoms} atoms")
+        self.lines.append(f'{len(self.species_to_type)} atom types\n')
+        self.lines.append(f"{self.box['xlo']:9.8f}  {self.box['xhi']:11.8f}  xlo xhi")
+        self.lines.append(f"{self.box['ylo']:9.8f}  {self.box['yhi']:11.8f}  ylo yhi")
+        self.lines.append(f"{self.box['zlo']:9.8f}  {self.box['zhi']:11.8f}  zlo zhi\n")
         self.lines.append('Masses\n')
-        for el in self.composition.keys():
-            self.lines.append(f'{self.lmp_types[el]}  {masses[el]:3.4f}  # {el}')
-        self.lines.append('\nAtoms\n')
-        for i, at_dict in self.atoms.items():
-            i += 1
-            self.lines.append(f"{i}  {self.lmp_types[at_dict['species']]}  {at_dict['position'][0]:12.8f}  {at_dict['position'][1]:12.8f}  {at_dict['position'][2]:12.8f}")
+        for el, t in self.species_to_type.items():
+            self.lines.append(f"{t}  {masses[el]:3.4f}  # {el}")
+        self.lines.append("\nAtoms\n")
+        for a in range(self.num_atoms):
+            self.lines.append(f"{self.ids[a]:<8}  {self.types[a]:<3}  {self.positions[a][0]:<12.8f}  {self.positions[a][1]:<12.8f}  {self.positions[a][2]:<12.8f}")
 
         super().write_to_file(write_path, append_newline=True)
             
     def insert_point_defect(self, defect_type: str, defect_species: str, defect_orientation: str):
         """Inserts a point defect at or near the center of the supercell."""
-        center = self.lattice_const/2*np.array(self.size)
-
+        center = self.lattice_const*np.array(self.size)/2
+        
         dist = []
-        for at_dict in self.atoms.values():
-            dist.append(np.linalg.norm(center-at_dict['position']))
+        for pos in self.positions:
+            dist.append(np.linalg.norm(center-pos))
 
         ref_pos_i = dist.index(min(dist))
-        ref_at_dict = self.atoms[ref_pos_i]
 
         # vacancy -> remove reference atom
         if defect_type == 'vac':
+            vac_at_type = self.types[ref_pos_i]
+
+            self.ids =  np.delete(self.ids, (ref_pos_i), axis=0)
+            self.types =  np.delete(self.types, (ref_pos_i), axis=0)
+            self.positions = np.delete(self.positions, (ref_pos_i), axis=0)
+
             self.num_atoms -= 1
-            self.atoms.pop(ref_pos_i)
+            if len(set(self.types)) != self.num_types:
+                raise RuntimeError(f"Inserting vacancy at {self.positions[ref_pos_i]} removed the last of atom type {vac_at_type}")
         
         # crowdion -> add atom between two others
         elif defect_type == 'crowd':
+            if defect_orientation == '111':
+                int_pos = self.positions[ref_pos_i] + self.lattice_const/4
+            
+            self.ids = np.insert(self.ids, (ref_pos_i), (self.num_atoms), axis=0)
+            self.types =  np.insert(self.types, (ref_pos_i), self.species_to_type[defect_species], axis=0)
+            self.positions = np.insert(self.positions, (ref_pos_i), (int_pos), axis=0)
+        
             self.num_atoms += 1
 
-            if defect_orientation == '111':
-                int_pos = ref_at_dict['position'] + self.lattice_const/4
-
-            self.atoms.update({self.num_atoms-1: {'position': int_pos, 'species': defect_species, 'type': self.lmp_types[defect_species]}})
-        
         # dumbbell -> move reference atom over and add atom on other side
         elif defect_type == 'db':
-            self.num_atoms += 1
-
             if defect_orientation == '100':
                 spacing = np.array([self.lattice_const/6, 0, 0])
             elif defect_orientation == '111':
                 spacing = np.array([self.lattice_const/6, self.lattice_const/6, self.lattice_const/6])
-            
-            ref_at_pos, int_pos = ref_at_dict['position'] - spacing, ref_at_dict['position'] + spacing
 
-            self.atoms[ref_pos_i]['position'] = ref_at_pos
-            self.atoms.update({self.num_atoms-1: {'position': int_pos, 'species': defect_species, 'type': self.lmp_types[defect_species]}})
-    
-    def compute_warren_cowley(self):
-        raise NotImplementedError
+            ref_at_pos, int_pos = self.positions[ref_pos_i] - spacing, self.positions[ref_pos_i] + spacing
+
+            self.ids = np.insert(self.ids, (ref_pos_i), (self.num_atoms), axis=0)
+            self.types =  np.insert(self.types, (ref_pos_i), self.species_to_type[defect_species], axis=0)
+            self.positions = np.insert(self.positions, (ref_pos_i), (int_pos), axis=0)
+            self.positions[ref_pos_i] = ref_at_pos
+
+            self.num_atoms += 1
 
 class LmpLog:
     def __init__(self, file_path: Path):
@@ -343,7 +442,7 @@ class LmpDump(LmpFile):
         # save last frame
         self.frames[timestep] = frame
 
-    def write_structure_file(self, write_path: Path, species: list[str], timestep = None):
+    def write_structure_file(self, write_path: Path, lattice_params: dict, timestep = None):
         if timestep is None:
             timestep = list(self.frames.keys())[-1]
         else:
@@ -355,24 +454,21 @@ class LmpDump(LmpFile):
         if not set(['type', 'id', 'position']).issubset(frame.keys()):
             raise KeyError(f'Dump file at {self.last_read_path} must at least have the atom type, id, x, y, z coords to define a valid structure input file')
         
+        # compute lattice constant from box dimensions
+        lattice_const = (product(frame['boxsize']) / product(lattice_params['size']))**(1/3)
+        
         lines = []
-        lines.append(f"Generated from a dump file at {self.last_read_path}.\n")
+        lines.append(f"{lattice_params['lattice']}  {lattice_const:1.4f}  {lattice_params['size'][0]}x{lattice_params['size'][1]}x{lattice_params['size'][2]}  {lattice_params['composition_str']}\n")
         lines.append(f"{frame['num_atoms']} atoms")
-        lines.append(f'{len(species)} atom types\n')
+        lines.append(f'{len(lattice_params['species'])} atom types\n')
         lines.append(f"{frame['box']['xlo']:9.8f}  {frame['box']['xhi']:11.8f}  xlo xhi")
         lines.append(f"{frame['box']['ylo']:9.8f}  {frame['box']['yhi']:11.8f}  ylo yhi")
-        lines.append(f"{frame['box']['zlo']:9.8f}  {frame['box']['zhi']:11.8f}  zlo zhi")
+        lines.append(f"{frame['box']['zlo']:9.8f}  {frame['box']['zhi']:11.8f}  zlo zhi\n")
         lines.append('Masses\n')
-        for t, el in enumerate(species):
-            self.lines.append(f"{t}  {masses[el]:3.4f}  # {el}")
-        self.lines.append("\nAtoms\n")
+        for t, el in enumerate(lattice_params['species']):
+            lines.append(f"{t+1}  {masses[el]:3.4f}  # {el}")
+        lines.append("\nAtoms\n")
         for a in range(frame['num_atoms']):
-            self.lines.append(f"{frame['id'][a]}  {frame['type'][a]}  {frame['position'][a][0]:12.8f}  {frame['position'][a][1]:12.8f}  {frame['position'][a][2]:12.8f}")
+            lines.append(f"{int(frame['id'][a]):<8}  {int(frame['type'][a]):<3}  {frame['position'][a][0]:<12.8f}  {frame['position'][a][1]:<12.8f}  {frame['position'][a][2]:<12.8f}")
 
-        with open(write_path, 'w') as f:
-            f.writelines(lines)
-
-        logger.debug(f'{self.__class__.__name__}: wrote structure to {write_path}')
-
-    def compute_warren_cowley(self):
-        raise NotImplementedError
+        super().write_to_file(write_path, append_newline=True, lines=lines)

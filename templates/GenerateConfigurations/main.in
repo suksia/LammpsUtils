@@ -70,6 +70,8 @@ reset_timestep 0
 
 neigh_modify delay 0 check yes
 
+fix 1 all box/relax iso 0.0
+
 log quench.log
 thermo_style custom step pe press vol
 thermo 1

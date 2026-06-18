@@ -256,8 +256,25 @@ class GenerateConfigurations(Study):
 
         # convert final configuration dumps into LAMMPS input files and save to dataset folder
         for mem_i in range(self.params['members']):
+            old_struct: LmpStructure = self.state['runs'][mem_i]['input_files']['config.in'] 
             dump = LmpDump(file_path=self.state['runs'][mem_i]['dir']/'final.dump')
-            dump.write_structure_file(self.dataset_dir/f'config_{mem_i}.lmp', [el for el in self.input_yml['composition'].keys()])
+
+            new_struct_write_path = self.dataset_dir/f'config_{mem_i}.lmp'
+            new_struct_params = {
+                'lattice': old_struct.lattice,
+                'species': list(old_struct.species_to_type.keys()),
+                'size': old_struct.size,
+                'composition_str': old_struct.composition_str
+            }
+
+            dump.write_structure_file(new_struct_write_path, new_struct_params)
+
+    def analyze(self):
+        pass
+        # compute Warren-Cowley parameters of all configurations
+        for mem_i in range(self.params['members']):
+            config = LmpStructure()
+            warren_cowley()
 
 @register_study
 class PointDefectInsertion(Study):

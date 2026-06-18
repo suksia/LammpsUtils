@@ -2,6 +2,7 @@ import random
 from pathlib import Path
 import numpy as np
 from numpy.polynomial import Polynomial
+from scipy.spatial import cKDTree
 
 def strip_split(s: str, sep=None, as_type=str):
     """Strip a string of any whitespace or newline characters, split it apart with a separator character, and convert items to given type."""
@@ -63,6 +64,13 @@ def sign(x):
     else:
         return -1
 
+def product(x: list[int|float]):
+    """Compute the product of items in a list, similar to the built-in sum()."""
+    prod = 1
+    for v in x:
+        prod *= v
+    return prod
+
 def create_seeds(num_seeds: int = None, bounds=(0, 1000000)):
     """Create a seed or a list of unique seeds with an integer value in the provided bounds."""
     random.seed()
@@ -73,3 +81,32 @@ def create_seeds(num_seeds: int = None, bounds=(0, 1000000)):
     while len(seeds) < num_seeds:
         seeds.update({random.randint(bounds[0], bounds[1]): None})
     return list(seeds.keys())
+
+def warren_cowley(num_neighbors: int, positions: np.ndarray, types: np.ndarray, boxsize: np.ndarray):
+    """Compute the Warren-Cowley parameters of a configuration given the simulation box size, atomic positions, and types."""
+    # k-d trees have O(log n) speed
+    position_tree = cKDTree(positions, boxsize=boxsize)
+
+    # square matrix where rows are reference atoms types and columns are number of neighbors of each type
+    neighbors = np.zeros((len(set(types)), len(set(types))))
+    wc = np.zeros((len(set(types)), len(set(types))))
+
+    # compute composition using types array
+    composition = {int(t): np.sum(np.where(types==t, 0, 1))/len(types) for t in set(types)}
+
+    # get number of neighbors of each type for each atom (using mininum image convention)
+    for pos in positions:
+        neigh_dist, neigh_idcs = position_tree.query(pos, k=num_neighbors+1)
+
+        ref_type = types[neigh_idcs[0]]
+        for ni in neigh_idcs[1:]:
+            neigh_type = types[ni]
+            types[ref_type-1, neigh_type-1] += 1
+            neighbors[ref_type-1, neigh_type-1] += 1
+
+    # compute all possible paramaters as an NxN matrix where N is the number types following the same convention as neighbors matrices
+    for to in types:
+        for ti in types:
+            wc[to-1, ti-1] = 1 - (neighbors[to-1, ti-1] / np.sum(neighbors[to-1, :])) / composition[to]
+
+    return wc
