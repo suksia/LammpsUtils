@@ -273,7 +273,7 @@ class GenerateConfigurations(Study):
             old_struct: LmpStructure = self.state['runs'][mem_i]['input_files']['config.in'] 
             dump = LmpDump(file_path=self.state['runs'][mem_i]['dir']/'final.dump')
 
-            new_struct_write_path = self.dataset_dir/f'config_{mem_i}.lmp'
+            new_struct_write_path = self.dataset_dir/f'config{mem_i}.in'
             new_struct_params = {
                 'lattice': old_struct.lattice,
                 'species': list(old_struct.species_to_type.keys()),
@@ -291,14 +291,14 @@ class GenerateConfigurations(Study):
             
             wc = {
                 'timesteps': [0]*len(snapshots_dump.frames),
-                'snapshots': np.zeros((len(self.params['species']), len(self.params['species']), len(snapshots_dump.frames))),
+                'snapshots': np.zeros((len(snapshots_dump.frames), len(self.params['species']), len(self.params['species']))),
                 'final': np.zeros((len(self.params['species']), len(self.params['species'])))
             }
 
             i = 0
             for timestep, snapshot in snapshots_dump.frames.items():
                 wc['timesteps'][i] = timestep  
-                wc['snapshots'][:, :, i] = warren_cowley(
+                wc['snapshots'][i, :, :] = warren_cowley(
                     self.params['wc_num_neighbors'], 
                     snapshot['position'], 
                     snapshot['type'], 
@@ -321,7 +321,7 @@ class GenerateConfigurations(Study):
     
     def save_data(self):
         wc_final_file = open(self.dir / 'wc.out', 'w')
-        all_wc_final = np.zeros((len(self.params['species']), len(self.params['species']), len(self.state['runs'][0]['wc']['timesteps'])))
+        all_wc_final = np.zeros((len(self.state['runs'][0]['wc']['timesteps']), len(self.params['species']), len(self.params['species'])))
 
         # save WC parameters data
         for mem_i in range(self.params['members']):
@@ -334,7 +334,7 @@ class GenerateConfigurations(Study):
             for i in range(len(self.params['species'])):
                 for j in range(len(self.params['species']))[i:]:
                     pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
-                    plt.plot(wc_dict['timesteps'], wc_dict['snapshots'][i, j, :], label=pair_str)
+                    plt.plot(wc_dict['timesteps'], wc_dict['snapshots'][:, i, j], label=pair_str)
             
             plt.hlines(0, wc_dict['timesteps'][0], wc_dict['timesteps'][-1])
             plt.ylim([-1, 1])
@@ -347,7 +347,7 @@ class GenerateConfigurations(Study):
             # write all computed WC parameters for each snapshot so they can be recovered later
             for i, t in enumerate(wc_dict['timesteps']):
                 wc_evolution_file.write(str(t)+'\n')
-                wc_evolution_file.write(np.array2string(wc_dict['snapshots'][:, :, i])+'\n\n')
+                wc_evolution_file.write(np.array2string(wc_dict['snapshots'][i, :, :])+'\n\n')
 
             wc_evolution_file.close()
 
@@ -355,10 +355,10 @@ class GenerateConfigurations(Study):
             wc_final_file.write(str(mem_i)+'\n')
             wc_final_file.write(np.array2string(wc_dict['final'])+'\n\n')
 
-            all_wc_final[:, :, mem_i] = wc_dict['final']
+            all_wc_final[mem_i, :, :] = wc_dict['final']
         
         # compute average WC parameters
-        all_wc_average = np.average(all_wc_final, axis=2)
+        all_wc_average = np.average(all_wc_final, axis=0)
 
         wc_final_file.write('Average\n')
         wc_final_file.write(np.array2string(all_wc_average))
