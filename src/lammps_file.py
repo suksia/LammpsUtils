@@ -385,7 +385,7 @@ class LmpLog:
 
 class LmpDump(LmpFile):
     def __init__(self, file_path=None, content_str=None):
-        super().__init__(file_path, content_str)
+        super().__init__(file_path=file_path, content_str=content_str)
         
         # dictionary mapping timestep to a dictionary of numpy arrays where each atom corresponds to the same index 
         self.frames: dict[int, dict[str, np.ndarray]] = {}
@@ -432,12 +432,12 @@ class LmpDump(LmpFile):
                 
                 # update data type of arrays
                 if 'id' in frame.keys():
-                    frame['id'].astype(np.int32)
+                    frame['id'] = frame['id'].astype(np.int32)
                 if 'type' in frame.keys():
-                    frame['type'].astype(np.int8)
+                    frame['type'] = frame['type'].astype(np.int8)
                 for k in ['x', 'y', 'z', 'position']:
                     if k in frame.keys():
-                        frame[k].astype(np.float32)
+                        frame[k] = frame[k].astype(np.float32)
 
         # save last frame
         self.frames[timestep] = frame

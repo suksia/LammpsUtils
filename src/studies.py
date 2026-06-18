@@ -287,11 +287,11 @@ class GenerateConfigurations(Study):
         # compute Warren-Cowley parameters of all configurations
         for mem_i in range(self.params['members']):
             # compute parameters for all snapshots for plotting the evolution
-            snapshots_dump = LmpDump(self.state['runs'][mem_i]['dir']/'mc.dump')
+            snapshots_dump = LmpDump(file_path=self.state['runs'][mem_i]['dir']/'mc.dump')
             
             wc = {
                 'timesteps': [0]*len(snapshots_dump.frames),
-                'data': np.zeros((len(self.params['species']), len(self.params['species']), len(snapshots_dump.frames))),
+                'snapshots': np.zeros((len(self.params['species']), len(self.params['species']), len(snapshots_dump.frames))),
                 'final': np.zeros((len(self.params['species']), len(self.params['species'])))
             }
 
@@ -305,9 +305,10 @@ class GenerateConfigurations(Study):
                     np.array([snapshot['box']['xlo'], snapshot['box']['ylo'], snapshot['box']['zlo']]),
                     snapshot['boxsize'],
                 )
+                i += 1
 
             # compute WC on final frame for reference
-            final_frame = LmpDump(self.state['runs'][mem_i]['dir']/'final.dump').frames.items()[0]
+            final_frame = list(LmpDump(file_path=self.state['runs'][mem_i]['dir']/'final.dump').frames.values())[0]
             wc['final'] = warren_cowley(
                 self.params['wc_num_neighbors'], 
                 final_frame['position'], 
@@ -320,7 +321,7 @@ class GenerateConfigurations(Study):
     
     def save_data(self):
         wc_final_file = open(self.dir / 'wc.out', 'w')
-        all_wc_final = np.zeros((len(self.params['species']), len(self.params['species']), len(wc_dict['timesteps'])))
+        all_wc_final = np.zeros((len(self.params['species']), len(self.params['species']), len(self.state['runs'][0]['wc']['timesteps'])))
 
         # save WC parameters data
         for mem_i in range(self.params['members']):
@@ -335,6 +336,8 @@ class GenerateConfigurations(Study):
                     pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
                     plt.plot(wc_dict['timesteps'], wc_dict['snapshots'][i, j, :], label=pair_str)
             
+            plt.hlines(0, wc_dict['timesteps'][0], wc_dict['timesteps'][-1])
+            plt.ylim([-1, 1])
             plt.xlabel('Timestep')
             plt.ylabel('Warren-Cowley Parameter')
             plt.legend()
@@ -342,27 +345,23 @@ class GenerateConfigurations(Study):
             plt.close()
             
             # write all computed WC parameters for each snapshot so they can be recovered later
-            for i, t in enumerate(wc_dict['timestep']):
-                wc_evolution_file.write(str(t), '\n')
-                wc_evolution_file.write(np.array2string(wc_dict['snapshots'][:, :, i]), '\n\n')
+            for i, t in enumerate(wc_dict['timesteps']):
+                wc_evolution_file.write(str(t)+'\n')
+                wc_evolution_file.write(np.array2string(wc_dict['snapshots'][:, :, i])+'\n\n')
 
             wc_evolution_file.close()
 
             # write final wc parameters
-            wc_final_file.write(str(mem_i), '\n')
-            wc_final_file.write(np.array2string(wc_dict['final']), '\n\n')
+            wc_final_file.write(str(mem_i)+'\n')
+            wc_final_file.write(np.array2string(wc_dict['final'])+'\n\n')
 
             all_wc_final[:, :, mem_i] = wc_dict['final']
         
         # compute average WC parameters
         all_wc_average = np.average(all_wc_final, axis=2)
 
-        for i in range(len(self.params['species'])):
-            for j in range(len(self.params['species']))[i:]:
-                pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
-                wc_final_file.write('Average\n')
-                wc_final_file.write(np.array2string(all_wc_average))
-        
+        wc_final_file.write('Average\n')
+        wc_final_file.write(np.array2string(all_wc_average))
         wc_final_file.close()
 
 @register_study

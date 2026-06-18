@@ -91,7 +91,7 @@ def warren_cowley(num_neighbors: int, positions: np.ndarray, types: np.ndarray, 
     positions = positions.round(decimals=4)
     unw_num_imgs = np.floor_divide(positions, boxsize)
     positions = positions - unw_num_imgs*boxsize
-    
+
     # k-d trees have O(log n) speed
     position_tree = cKDTree(positions, boxsize=boxsize)
 
@@ -109,7 +109,6 @@ def warren_cowley(num_neighbors: int, positions: np.ndarray, types: np.ndarray, 
         ref_type = types[neigh_idcs[0]]
         for ni in neigh_idcs[1:]:
             neigh_type = types[ni]
-            types[ref_type-1, neigh_type-1] += 1
             neighbors[ref_type-1, neigh_type-1] += 1
 
     # compute all possible paramaters as an NxN matrix where N is the number types following the same convention as neighbors matrices
