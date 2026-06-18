@@ -321,7 +321,7 @@ class GenerateConfigurations(Study):
     
     def save_data(self):
         wc_final_file = open(self.dir / 'wc.out', 'w')
-        all_wc_final = np.zeros((len(self.state['runs'][0]['wc']['timesteps']), len(self.params['species']), len(self.params['species'])))
+        all_wc_final = np.zeros((self.params['members'], len(self.params['species']), len(self.params['species'])))
 
         # save WC parameters data
         for mem_i in range(self.params['members']):
