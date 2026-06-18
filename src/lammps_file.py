@@ -70,7 +70,7 @@ class LmpStructure(LmpFile):
 
         self.size = []
         self.box = {}
-        self.boxsize = np.array(3)
+        self.boxsize = np.zeros(3)
 
         self.lattice: str = ''
         self.lattice_const = 0.0
@@ -190,7 +190,7 @@ class LmpStructure(LmpFile):
         i = 0
         for el, n_at in at_composition.items():
             for j in range(n_at):
-                self.ids[rand_pos_idx[i]] = self.species_to_type[el]
+                self.types[rand_pos_idx[i]] = self.species_to_type[el]
                 i += 1
 
     def load_from_file(self):
@@ -258,7 +258,7 @@ class LmpStructure(LmpFile):
 
     def write_to_file(self, write_path):
         self.lines = []
-        self.lines.append(f"{self.lattice}  {self.lattice_const}  {self.size[0]}x{self.size[1]}x{self.size[2]}  {self.composition_str}\n")
+        self.lines.append(f"{self.lattice}  {self.lattice_const:2.3f}  {self.size[0]}x{self.size[1]}x{self.size[2]}  {self.composition_str}\n")
         self.lines.append(f"{self.num_atoms} atoms")
         self.lines.append(f'{len(self.species_to_type)} atom types\n')
         self.lines.append(f"{self.box['xlo']:9.8f}  {self.box['xhi']:11.8f}  xlo xhi")
@@ -269,7 +269,7 @@ class LmpStructure(LmpFile):
             self.lines.append(f"{t}  {masses[el]:3.4f}  # {el}")
         self.lines.append("\nAtoms\n")
         for a in range(self.num_atoms):
-            self.lines.append(f"{self.ids[a]:<8}  {self.types[a]:<3}  {self.positions[a][0]:<12.8f}  {self.positions[a][1]:<12.8f}  {self.positions[a][2]:<12.8f}")
+            self.lines.append(f"{self.ids[a]:<8}  {self.types[a]:<2}  {self.positions[a][0]:<12.8f}  {self.positions[a][1]:<12.8f}  {self.positions[a][2]:<12.8f}")
 
         super().write_to_file(write_path, append_newline=True)
             
@@ -458,9 +458,9 @@ class LmpDump(LmpFile):
         lattice_const = (product(frame['boxsize']) / product(lattice_params['size']))**(1/3)
         
         lines = []
-        lines.append(f"{lattice_params['lattice']}  {lattice_const:1.4f}  {lattice_params['size'][0]}x{lattice_params['size'][1]}x{lattice_params['size'][2]}  {lattice_params['composition_str']}\n")
+        lines.append(f"{lattice_params['lattice']}  {lattice_const:2.4f}  {lattice_params['size'][0]}x{lattice_params['size'][1]}x{lattice_params['size'][2]}  {lattice_params['composition_str']}\n")
         lines.append(f"{frame['num_atoms']} atoms")
-        lines.append(f'{len(lattice_params['species'])} atom types\n')
+        lines.append(f"{len(lattice_params['species'])} atom types\n")
         lines.append(f"{frame['box']['xlo']:9.8f}  {frame['box']['xhi']:11.8f}  xlo xhi")
         lines.append(f"{frame['box']['ylo']:9.8f}  {frame['box']['yhi']:11.8f}  ylo yhi")
         lines.append(f"{frame['box']['zlo']:9.8f}  {frame['box']['zhi']:11.8f}  zlo zhi\n")

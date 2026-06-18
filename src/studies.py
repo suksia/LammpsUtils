@@ -213,6 +213,7 @@ class GenerateConfigurations(Study):
         
         # update params common to all members/configurations
         self.params.update({
+            'species': list(self.input_yml['composition'].keys()),
             'elements': tilps(list(self.input_yml['composition'].keys())),
             'temp': self.input_yml['temperature'],
             'equil': unprefix(self.input_yml['equil']),
@@ -222,6 +223,19 @@ class GenerateConfigurations(Study):
             'mc': unprefix(self.input_yml['mc'][2]),
             'snapshot': unprefix(self.input_yml['snapshot'])
         })
+
+        if 'wc_shell' not in self.input_yml.keys():
+            self.params['wc_shell'] = 1
+        
+        if self.params['lattice'] == 'bcc':
+            if self.params['wc_shell'] == 1:
+                self.params['wc_num_neighbors'] = 8
+
+            elif self.params['wc_shell'] == 2:
+                self.params['wc_num_neighbors'] = 14
+
+            elif self.params['wc_shell'] == 3:
+                self.params['wc_num_neighbors'] = 26
 
         # define seeds for atom/swap RNG 
         mc_seeds = create_seeds(self.params['members'])
@@ -270,11 +284,74 @@ class GenerateConfigurations(Study):
             dump.write_structure_file(new_struct_write_path, new_struct_params)
 
     def analyze(self):
-        pass
         # compute Warren-Cowley parameters of all configurations
         for mem_i in range(self.params['members']):
-            config = LmpStructure()
-            warren_cowley()
+            # compute parameters for all snapshots for plotting the evolution
+            snapshots_dump = LmpDump(self.state['runs'][mem_i]['dir']/'mc.dump')
+            
+            wc = {
+                'timestep': [0]*len(snapshots_dump.frames),
+                'data': np.zeros((self.params['species'], self.params['species'], len(snapshots_dump.frames))),
+                'final': np.zeros((self.params['species'], self.params['species']))
+            }
+
+            i = 0
+            for timestep, snapshot in snapshots_dump.frames.items():
+                wc['timesteps'][i] = timestep  
+                wc['snapshots'][:, :, i] = warren_cowley(self.params['wc_num_neighbors'], snapshot['position'], snapshot['type'], snapshot['boxsize'])
+
+            # compute WC on final frame for reference
+            final_frame = LmpDump(self.state['runs'][mem_i]['dir']/'final.dump').frames.items()[0]
+            wc['final'] = warren_cowley(self.params['wc_num_neighbors'], final_frame['position'], final_frame['type'], final_frame['boxsize'])
+            
+            self.state['runs'][mem_i]['wc'] = wc
+    
+    def save_data(self):
+        wc_final_file = open(self.dir / 'wc.out', 'w')
+        all_wc_final = np.zeros((self.params['species'], self.params['species'], len(wc_dict['timesteps'])))
+
+        # save WC parameters data
+        for mem_i in range(self.params['members']):
+            subdir = self.state['runs'][mem_i]['dir']
+            wc_evolution_file = open(subdir/'wc_snapshots.out', 'w')
+
+            wc_dict = self.state['runs'][mem_i]['wc']
+
+            # plot evolution for each initial configuration
+            for i in range(len(self.params['species'])):
+                for j in range(len(self.params['species']))[i:]:
+                    pair_str = f'{self.params['species'][i]}-{self.params['species'][j]}'
+                    plt.plot(wc_dict['timesteps'], wc_dict['snapshots'][i, j, :], label=pair_str)
+            
+            plt.xlabel('Timestep')
+            plt.ylabel('Warren-Cowley Parameter')
+            plt.legend()
+            plt.savefig(self.state['runs'][mem_i]['dir']/'wc_evolution.png', bbox_inches="tight")
+            plt.close()
+            
+            # write all computed WC parameters for each snapshot so they can be recovered later
+            for i, t in enumerate(wc_dict['timestep']):
+                wc_evolution_file.write(str(t), '\n')
+                wc_evolution_file.write(np.array2string(wc_dict['snapshots'][:, :, i]), '\n\n')
+
+            wc_evolution_file.close()
+
+            # write final wc parameters
+            wc_final_file.write(str(mem_i), '\n')
+            wc_final_file.write(np.array2string(wc_dict['final']), '\n\n')
+
+            all_wc_final[:, :, mem_i] = wc_dict['final']
+        
+        # compute average WC parameters
+        all_wc_average = np.average(all_wc_final, axis=2)
+
+        for i in range(len(self.params['species'])):
+            for j in range(len(self.params['species']))[i:]:
+                pair_str = f'{self.params['species'][i]}-{self.params['species'][j]}'
+                wc_final_file.write('Average\n')
+                wc_final_file.write(np.array2string(all_wc_average))
+        
+        wc_final_file.close()
 
 @register_study
 class PointDefectInsertion(Study):

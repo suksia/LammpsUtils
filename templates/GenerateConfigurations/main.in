@@ -74,9 +74,9 @@ fix 1 all box/relax iso 0.0
 
 log quench.log
 thermo_style custom step pe press vol
-thermo 1
+thermo 50
 
 min_style cg
-minimize 1.0e-10 1.0e-10 1000 10000
+minimize 1.0e-5 1.0e-5 10000 1000000
 
 write_dump all custom final.dump id type x y z
