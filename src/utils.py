@@ -82,8 +82,16 @@ def create_seeds(num_seeds: int = None, bounds=(0, 1000000)):
         seeds.update({random.randint(bounds[0], bounds[1]): None})
     return list(seeds.keys())
 
-def warren_cowley(num_neighbors: int, positions: np.ndarray, types: np.ndarray, boxsize: np.ndarray):
+def warren_cowley(num_neighbors: int, positions: np.ndarray, types: np.ndarray, boxlo:np.ndarray, boxsize: np.ndarray):
     """Compute the Warren-Cowley parameters of a configuration given the simulation box size, atomic positions, and types."""
+    # move box back to origin and correct positions
+    positions = positions - boxlo
+    
+    # coordinates are not required to be within the box, so wrap any that are outside the box
+    positions = positions.round(decimals=4)
+    unw_num_imgs = np.floor_divide(positions, boxsize)
+    positions = positions - unw_num_imgs*boxsize
+    
     # k-d trees have O(log n) speed
     position_tree = cKDTree(positions, boxsize=boxsize)
 
