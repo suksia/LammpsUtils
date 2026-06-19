@@ -247,7 +247,7 @@ class GenerateConfigurations(Study):
             main_in = LmpInput(file_path=self.templates_dir/'main.in')
             main_in.add_params(self.params)
 
-            struct_in = LmpStructure(self.params)
+            struct_in = LmpStructure(lattice_params=self.params)
             self.state['runs'][mem_i]['input_files'].update({'config.in': struct_in, 'main.in': main_in})
 
     def build_directory(self):
@@ -374,13 +374,32 @@ class PointDefectInsertion(Study):
         # add elements parameter for defining potential
         self.params.update({'elements': tilps(list(self.input_yml['composition'].keys()))})
 
+        # randomly choose configurations
+        if 'dataset' in self.input_yml.keys():
+            dataset_dir = Path(self.input_yml['dataset'])
+            if not dataset_dir.exists():
+                raise ValueError(f'Dataset directory {dataset_dir} does not exist')
+            
+            dataset_configs = [fp for fp in dataset_dir.iterdir() if fp.is_file()]
+
+            # make sure there are enough configurations
+            if self.params['members'] > len(dataset_configs):
+                raise ValueError(f"Number of members ({self.params['members']}) exceeds number of configurations available in dataset ({len(dataset_configs)})")
+            
+            dataset_configs = [dataset_configs[i] for i in random_range(0, self.params['members'])]
+
         # define input files for each member
         for mem_i in range(self.params['members']):
             main_in = LmpInput(file_path=self.templates_dir/'main.in')
             main_in.add_params(self.params)
             self.state['runs'][mem_i]['input_files'].update({'main.in': main_in})
+            
+            # either load a configuration or make one from scratch
+            if 'dataset' in self.input_yml.keys():
+                pristine_struct = LmpStructure(file_path=dataset_configs[mem_i])
+            else:
+                pristine_struct = LmpStructure(lattice_params=self.params)
 
-            pristine_struct = LmpStructure(self.params)
             self.state['runs'][mem_i]['input_files'].update({'pristine.in': pristine_struct})
     
             if self.input_yml['defect'] == 'vac':
@@ -452,6 +471,7 @@ class PointDefectInsertion(Study):
 class PointDefectDiffusion(Study):
     """Samples configurations and computes the migration energy for each one by diffusing point defects."""
     def init_state(self):
+        raise NotImplementedError()
         # setup containers
         self.sim_ids = self.input_yml['temperatures']
         if type(self.sim_ids) != list:

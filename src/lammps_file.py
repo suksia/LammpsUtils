@@ -62,7 +62,7 @@ class LmpInput(LmpFile):
 
 class LmpStructure(LmpFile):
     """Input structure data file for LAMMPS which is a randomized bcc/fcc lattice of elements."""
-    def __init__(self, params: dict, file_path: Path = None):
+    def __init__(self, file_path: Path = None, lattice_params: dict = None):
         # attributes required to fully define the structure
         self.ids: np.ndarray = None
         self.types: np.ndarray = None
@@ -87,7 +87,7 @@ class LmpStructure(LmpFile):
 
         # build structure from scratch as a random disorded alloy (reduces to bulk metal for single component)
         if file_path is None:
-            self.create_lattice(params)
+            self.create_lattice(lattice_params)
     
     def create_lattice(self, params):
         """Constructs a random disordered cubic alloy."""

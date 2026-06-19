@@ -82,6 +82,12 @@ def create_seeds(num_seeds: int = None, bounds=(0, 1000000)):
         seeds.update({random.randint(bounds[0], bounds[1]): None})
     return list(seeds.keys())
 
+def random_range(start, stop, step=1, seed=None):
+    """Creates a randomized range of integers."""
+    rng = np.random.default_rng(seed=seed)
+    values = np.arange(start, stop, step)
+    return rng.permutation(values).tolist()
+
 def warren_cowley(num_neighbors: int, positions: np.ndarray, types: np.ndarray, boxlo:np.ndarray, boxsize: np.ndarray):
     """Compute the Warren-Cowley parameters of a configuration given the simulation box size, atomic positions, and types."""
     # list like [1, 2, 1, 1] -> list like [1, 2]

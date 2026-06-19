@@ -23,6 +23,7 @@ def main():
     # load user input
     with open(input_fp, 'r') as f:
         input_params: dict = yaml.safe_load(f)
+        input_params_lines = f.readlines()
     logger.debug(f'Loaded input file {input_fp}')
 
     # initialize a study
@@ -33,8 +34,9 @@ def main():
     # build directory tree and copy in input file
     study.build_directory()
     logger.debug(f'Built directory tree at {study.dir}')
-    #shutil.copy(input_fp, study.dir)
-
+    with open(study.dir/input_fp.name, 'w') as f:
+        f.writelines(input_params_lines)
+        
     # run lammps
     logger.debug(f'Starting LAMMPS simulations...')
     study.run_lammps()
