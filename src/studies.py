@@ -82,9 +82,9 @@ class Study:
                     for line in rf.readlines():
                         line = strip_split(line)
                         if len(line) == 2:
-                            conf_i, sim_i, mem_i = None, int(line[0]), int(line[1])
+                            conf_i, sim_i, mem_i = None, line[0], int(line[1])
                         elif len(line) == 3:
-                            conf_i, sim_i, mem_i = int(line[0]), int(line[1]), int(line[2])
+                            conf_i, sim_i, mem_i = int(line[0]), line[1], int(line[2])
                         else:
                             continue
                         

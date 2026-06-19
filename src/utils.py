@@ -84,6 +84,10 @@ def create_seeds(num_seeds: int = None, bounds=(0, 1000000)):
 
 def warren_cowley(num_neighbors: int, positions: np.ndarray, types: np.ndarray, boxlo:np.ndarray, boxsize: np.ndarray):
     """Compute the Warren-Cowley parameters of a configuration given the simulation box size, atomic positions, and types."""
+    # list like [1, 2, 1, 1] -> list like [1, 2]
+    unique_types = sorted(list(set(types))) 
+    num_unique_types = len(unique_types)
+
     # move box back to origin and correct positions
     positions = positions - boxlo
     
@@ -96,11 +100,11 @@ def warren_cowley(num_neighbors: int, positions: np.ndarray, types: np.ndarray, 
     position_tree = cKDTree(positions, boxsize=boxsize)
 
     # square matrix where rows are reference atoms types and columns are number of neighbors of each type
-    neighbors = np.zeros((len(set(types)), len(set(types))))
-    wc = np.zeros((len(set(types)), len(set(types))))
+    neighbors = np.zeros((num_unique_types, num_unique_types))
+    wc = np.zeros((num_unique_types, num_unique_types))
 
     # compute composition using types array
-    composition = {int(t): np.sum(np.where(types==t, 0, 1))/len(types) for t in set(types)}
+    composition = {int(t): np.sum(np.where(types==t, 0, 1))/len(types) for t in unique_types}
 
     # get number of neighbors of each type for each atom (using mininum image convention)
     for pos in positions:
@@ -112,8 +116,8 @@ def warren_cowley(num_neighbors: int, positions: np.ndarray, types: np.ndarray, 
             neighbors[ref_type-1, neigh_type-1] += 1
 
     # compute all possible paramaters as an NxN matrix where N is the number types following the same convention as neighbors matrices
-    for to in types:
-        for ti in types:
+    for to in unique_types:
+        for ti in unique_types:
             wc[to-1, ti-1] = 1 - (neighbors[to-1, ti-1] / np.sum(neighbors[to-1, :])) / composition[to]
 
     return wc
