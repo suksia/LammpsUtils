@@ -19,19 +19,19 @@ except:
     NTASKS = 1
 
 class LmpJob:
-    def __init__(self, member_dir: Path, num_processors: int):
-        self.member_dir = member_dir
-        self.outfile = open(member_dir / 'lmp.out', 'w')
+    def __init__(self, lmp_fp: Path, num_processors: int):
+        self.member_dir = lmp_fp.parent
+        self.outfile = open(self.member_dir / f'{lmp_fp.stem}.out', 'w')
         self.finished = False
         self.counted = False
 
         self.lammps_cmd = [
             'srun', 
             f'--ntasks={num_processors}',
-            '--export=ALL', 
+            '--export=ALL',
             'lmp', 
-            '-in', 
-            'main.in']
+            '-in',
+            lmp_fp.name]
         
         self.process = subprocess.Popen(self.lammps_cmd, cwd=self.member_dir, stdout=self.outfile, stderr=subprocess.STDOUT)
         logger.debug(f'Launching LAMMPS for T={self.member_dir.parent.name} and member={self.member_dir.name}...')
@@ -105,7 +105,7 @@ class Study:
             self.restart = False
             self.dir = next_path(Path(self.input_yml['dir']) / self.name)
 
-    def run_lammps(self, state: dict):
+    def run_lammps(self, state: dict, lmp_fn = 'main.in'):
         """Continuously launch LAMMPS in parallel until all simulations and members have finished running."""
         # replace 0 with jobs as they're scheduled 
         jobs = {sim_i: {mem_i: 0 for mem_i in state[sim_i].keys()} for sim_i in self.sim_ids}
@@ -179,14 +179,14 @@ class Study:
                             logger.debug(f'LAMMPS has already been run for sim={sim_i} and member={mem_i}. Skipping it')
                             continue
 
-                job_dir = state[sim_i][mem_i]['dir']
+                job_dir: Path = state[sim_i][mem_i]['dir']
 
                 # write input files
                 for fn, lmpfile in state[sim_i][mem_i]['input_files'].items():
                     lmpfile.write_to_file(job_dir/fn)
 
                 # run LAMMPS and save process
-                jobs[sim_i][mem_i] = LmpJob(job_dir, self.params['processors'])
+                jobs[sim_i][mem_i] = LmpJob(job_dir/lmp_fn, self.params['processors'])
                 state[sim_i][mem_i]['status'] = 1
         
         restart_file.close()
@@ -374,6 +374,14 @@ class PointDefectInsertion(Study):
         # add elements parameter for defining potential
         self.params.update({'elements': tilps(list(self.input_yml['composition'].keys()))})
 
+        # minimization stopping criteria
+        self.params.update({
+            'etol': f'{self.input_yml['minimize'][0]:.2e}',
+            'ftol': f'{self.input_yml['minimize'][1]:.2e}',
+            'maxiter': unprefix(self.input_yml['minimize'][2]),
+            'maxeval': unprefix(self.input_yml['minimize'][3])
+        })
+
         # randomly choose configurations
         if 'dataset' in self.input_yml.keys():
             dataset_dir = Path(self.input_yml['dataset'])
@@ -390,18 +398,33 @@ class PointDefectInsertion(Study):
 
         # define input files for each member
         for mem_i in range(self.params['members']):
-            main_in = LmpInput(file_path=self.templates_dir/'main.in')
-            main_in.add_params(self.params)
-            self.state['runs'][mem_i]['input_files'].update({'main.in': main_in})
+            # main input files for perfect and defective systems
+            pris_in = LmpInput(file_path=self.templates_dir/'pristine.in')
+            pris_in.add_params(self.params)
+            self.state['runs'][mem_i]['input_files'].update({'pristine.in': pris_in})
+            
+            def_in = LmpInput(file_path=self.templates_dir/'defective.in')
+            def_in.add_params(self.params)
+            self.state['runs'][mem_i]['input_files'].update({'defective.in': def_in})
             
             # either load a configuration or make one from scratch
             if 'dataset' in self.input_yml.keys():
-                pristine_struct = LmpStructure(file_path=dataset_configs[mem_i])
+                pris_struct = LmpStructure(file_path=dataset_configs[mem_i])
             else:
-                pristine_struct = LmpStructure(lattice_params=self.params)
+                pris_struct = LmpStructure(lattice_params=self.params)
 
-            self.state['runs'][mem_i]['input_files'].update({'pristine.in': pristine_struct})
-    
+            self.state['runs'][mem_i]['input_files'].update({'pristine.in': pris_struct})
+
+    def run_lammps(self):
+        # relax pristine system first
+        logger.debug(f'Starting with first set of LAMMPS simulations for pristine system')
+        super().run_lammps(self.state, lmp_fn='pristine.in')
+
+        # insert point defect into pristine system
+        for mem_i in range(self.params['members']):
+            subdir = self.state['runs'][mem_i]['dir']
+            pris_dump = LmpDump(subdir / 'pristine.dump')
+
             if self.input_yml['defect'] == 'vac':
                 def_type = 'vac'
                 def_species = None
@@ -411,13 +434,22 @@ class PointDefectInsertion(Study):
                 def_species = self.input_yml['int_species']
                 def_orientation = str(self.input_yml['int_orient'])
 
-            defective_struct = deepcopy(pristine_struct)
-            defective_struct.insert_point_defect(def_type, def_species, def_orientation)
-            self.state['runs'][mem_i]['input_files'].update({'defective.in': defective_struct})
+            pris_struct: LmpStructure = self.state['runs'][mem_i]['input_files']['pristine.in']
+            pris_lat_params = {
+                'lattice': pris_struct.lattice,
+                'size': pris_struct.size,
+                'composition_str': pris_struct.composition_str
+            }
 
-    def run_lammps(self):
-        super().run_lammps(self.state)
+            def_struct: LmpStructure = pris_dump.to_struct(pris_lat_params)
+            def_struct.insert_point_defect(def_type, def_species, def_orientation)
 
+            self.state['runs'][mem_i]['input_files'].update({'defective.in': def_struct})
+        
+        # relax defective system
+        logger.debug(f'Running second set of LAMMPS simulations for defective system')
+        super().run_lammps(self.state, lmp_fn='defective.in')
+            
     def build_directory(self):
         super().build_directory()
         self.dir.mkdir(exist_ok=True)

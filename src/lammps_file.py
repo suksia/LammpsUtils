@@ -88,7 +88,7 @@ class LmpStructure(LmpFile):
         # build structure from scratch as a random disorded alloy (reduces to bulk metal for single component)
         if file_path is None:
             self.create_lattice(lattice_params)
-    
+            
     def create_lattice(self, params):
         """Constructs a random disordered cubic alloy."""
         # read in parameters
@@ -193,7 +193,9 @@ class LmpStructure(LmpFile):
                 self.types[rand_pos_idx[i]] = self.species_to_type[el]
                 i += 1
 
-    def load_from_file(self):
+    def load_from_file(self, read_path):
+        super().load_from_file(read_path)
+        
         # header comment metadata: bcc 3.07 3x3x3 W43-Mo57
         header_comment = strip_split(self.lines[0])
 
@@ -201,28 +203,33 @@ class LmpStructure(LmpFile):
         self.lattice_const = float(header_comment[1])
         self.size = strip_split(header_comment[2], 'x', as_type=int)
         
-        self.composition_str = strip_split(header_comment[3], sep='-')
-        for c in self.composition_str:
+        self.composition_str = header_comment[3]
+        for c in strip_split(self.composition_str, sep='-'):
             if c[:2] not in masses.keys():
                 el = c[0]
+                conc = float(c[1:])
             else:
                 el = c[:2]
-            self.composition[el] = float(c[2:])
+                conc = float(c[2:])
+            self.composition[el] = conc
 
         # header lines
         for l, line in enumerate(self.lines):
-            line = line.split()
+            line_params = strip_split(line)
             if 'atoms' in line:
-                self.num_atoms = int(strip_split(line)[0])
+                self.num_atoms = int(line_params[0])
             elif 'atom types' in line:
-                self.num_types = int(strip_split(line)[0])
+                self.num_types = int(line_params[0])
             elif 'lo' in line:
-                line_params = strip_split(line)
                 d = line_params[-1][0]
                 self.box.update({
                     f'{d}lo': float(line_params[0]),
                     f'{d}hi': float(line_params[1]),
                 })
+            
+            # start of body lines
+            if any([True if bl in line else False for bl in ['Atoms', 'Masses']]):
+                break
 
         for i, d in enumerate(['x', 'y', 'z']):
             self.boxsize[i] = self.box[f'{d}hi']-self.box[f'{d}lo']        
@@ -234,26 +241,27 @@ class LmpStructure(LmpFile):
         self.types = np.zeros(self.num_atoms, dtype=np.int8)
         self.positions = np.zeros((self.num_atoms, 3), dtype=np.float32)
 
+        skip = 0
         for lo, line in enumerate(self.lines[eoh_l:]):
-            line = line.split()
-            lo += 2
+            line = line.strip()
+            lo += eoh_l
 
             if skip:
                 skip -= 1
                 continue
 
             if line == 'Masses':
-                for iline in self.lines[lo:lo+self.num_types]:
-                    iline_params = iline.split()
-                    self.species_to_type[iline_params[-1]: int(iline_params[0])]
+                for iline in self.lines[lo+2:lo+2+self.num_types]:
+                    iline_params = strip_split(iline)
+                    self.species_to_type.update({iline_params[-1]: int(iline_params[0])})
                 skip = 2 + self.num_types
 
             elif line == 'Atoms':
-                for li, inner_line in enumerate(self.lines[lo+2:lo+2+self.num_atoms]):
-                    inner_line_params = inner_line.split()
-                    self.ids[li] = int(inner_line_params[0])
-                    self.types[li] = int(inner_line_params[1])
-                    self.positions[li] = np.array([float(val) for val in inner_line_params[2:]])
+                for li, iline in enumerate(self.lines[lo+2:lo+2+self.num_atoms]):
+                    iline_params = strip_split(iline)
+                    self.ids[li] = int(iline_params[0])
+                    self.types[li] = int(iline_params[1])
+                    self.positions[li] = np.array([float(val) for val in iline_params[2:]])
                 skip = 2 + self.num_atoms
 
     def write_to_file(self, write_path):
@@ -443,6 +451,13 @@ class LmpDump(LmpFile):
         self.frames[timestep] = frame
 
     def write_structure_file(self, write_path: Path, lattice_params: dict, timestep = None):
+        """Generate a LAMMPS data file from the dump data at a given timestep."""
+        struct = self.to_struct(lattice_params, timestep=timestep)
+        struct.write_to_file(write_path)
+
+    def to_struct(self, lattice_params: dict, timestep = None):
+        """Instantiate a LmpStructure object using dump data at a given timestep."""
+        # determine frame to pull data from
         if timestep is None:
             timestep = list(self.frames.keys())[-1]
         else:
@@ -454,21 +469,31 @@ class LmpDump(LmpFile):
         if not set(['type', 'id', 'position']).issubset(frame.keys()):
             raise KeyError(f'Dump file at {self.last_read_path} must at least have the atom type, id, x, y, z coords to define a valid structure input file')
         
-        # compute lattice constant from box dimensions
-        lattice_const = (product(frame['boxsize']) / product(lattice_params['size']))**(1/3)
-        
-        lines = []
-        lines.append(f"{lattice_params['lattice']}  {lattice_const:2.4f}  {lattice_params['size'][0]}x{lattice_params['size'][1]}x{lattice_params['size'][2]}  {lattice_params['composition_str']}\n")
-        lines.append(f"{frame['num_atoms']} atoms")
-        lines.append(f"{len(lattice_params['species'])} atom types\n")
-        lines.append(f"{frame['box']['xlo']:9.8f}  {frame['box']['xhi']:11.8f}  xlo xhi")
-        lines.append(f"{frame['box']['ylo']:9.8f}  {frame['box']['yhi']:11.8f}  ylo yhi")
-        lines.append(f"{frame['box']['zlo']:9.8f}  {frame['box']['zhi']:11.8f}  zlo zhi\n")
-        lines.append('Masses\n')
-        for t, el in enumerate(lattice_params['species']):
-            lines.append(f"{t+1}  {masses[el]:3.4f}  # {el}")
-        lines.append("\nAtoms\n")
-        for a in range(frame['num_atoms']):
-            lines.append(f"{int(frame['id'][a]):<8}  {int(frame['type'][a]):<3}  {frame['position'][a][0]:<12.8f}  {frame['position'][a][1]:<12.8f}  {frame['position'][a][2]:<12.8f}")
+        # initialize structure and manually update attributes since create_lattice nor load_from_file was called
+        struct = LmpStructure()
 
-        super().write_to_file(write_path, append_newline=True, lines=lines)
+        struct.ids = frame['id']
+        struct.types = frame['type']
+        struct.positions = frame['position']
+
+        struct.size = lattice_params['size']
+        struct.box = frame['box']
+        struct.boxsize = frame['boxsize']
+
+        struct.lattice = lattice_params['lattice']
+        struct.lattice_const = (product(frame['boxsize']) / product(lattice_params['size']))**(1/3)
+        struct.num_atoms = frame['num_atoms']
+        
+        struct.composition_str = lattice_params['composition_str']
+        for c in strip_split(struct.composition_str, sep='-'):
+            if c[:2] not in masses.keys():
+                el = c[0]
+                conc = float(c[1:])
+            else:
+                el = c[:2]
+                conc = float(c[2:])
+            struct.composition[el] = conc
+        
+        struct.num_types = len(struct.composition)
+
+        return struct

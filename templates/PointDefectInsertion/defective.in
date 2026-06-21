@@ -1,0 +1,20 @@
+units metal
+atom_style atomic
+boundary p  p  p
+
+read_data defective.in
+
+pair_style ?pair_style?
+pair_coeff * * ?potential? ?elements?
+
+neighbor ?skin? bin
+neigh_modify every 1 delay 0 check yes
+
+log defective.log
+thermo_style custom step pe press vol
+thermo 25
+
+min_style cg
+minimize ?etol? ?ftol? ?maxiter? ?maxeval?
+
+write_dump all custom defective.dump id type x y z
