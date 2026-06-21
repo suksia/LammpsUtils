@@ -417,7 +417,7 @@ class PointDefectInsertion(Study):
             else:
                 pris_struct = LmpStructure(lattice_params=self.params)
 
-            self.state['runs'][mem_i]['input_files'].update({'pristine.struct': pris_struct})
+            self.state['defective'][mem_i]['input_files'].update({'pristine.struct': pris_struct})
 
     def run_lammps(self):
         # relax pristine system first
@@ -426,7 +426,7 @@ class PointDefectInsertion(Study):
 
         # insert point defect into pristine system
         for mem_i in range(self.params['members']):
-            subdir = self.state['runs'][mem_i]['dir']
+            subdir = self.state['pristine'][mem_i]['dir']
             pris_dump = LmpDump(subdir / 'pristine.dump')
 
             if self.input_yml['defect'] == 'vac':
@@ -438,7 +438,7 @@ class PointDefectInsertion(Study):
                 def_species = self.input_yml['int_species']
                 def_orientation = str(self.input_yml['int_orient'])
 
-            pris_struct: LmpStructure = self.state['runs'][mem_i]['input_files']['pristine.struct']
+            pris_struct: LmpStructure = self.state['pristine'][mem_i]['input_files']['pristine.struct']
             pris_lat_params = {
                 'lattice': pris_struct.lattice,
                 'size': pris_struct.size,
@@ -448,7 +448,7 @@ class PointDefectInsertion(Study):
             def_struct: LmpStructure = pris_dump.to_struct(pris_lat_params)
             def_struct.insert_point_defect(def_type, def_species, def_orientation)
 
-            self.state['runs'][mem_i]['input_files'].update({'defective.struct': def_struct})
+            self.state['defective'][mem_i]['input_files'].update({'defective.struct': def_struct})
         
         # relax defective system
         logger.debug(f'Running second set of LAMMPS simulations for defective system')
@@ -457,7 +457,7 @@ class PointDefectInsertion(Study):
     def build_directory(self):
         super().build_directory()
         self.dir.mkdir(exist_ok=True)
-        
+
         # self.state[sim_id] dict should only have keys that are member indices
         runs_dir: Path = self.dir / 'runs'
         runs_dir.mkdir(exist_ok=True)
@@ -465,7 +465,8 @@ class PointDefectInsertion(Study):
         for mem_i in range(self.input_yml['members']):
             subdir = runs_dir / str(mem_i)
             subdir.mkdir(exist_ok=True)
-            self.state['runs'][mem_i].update({'dir' : subdir})
+            self.state['pristine'][mem_i].update({'dir' : subdir})
+            self.state['defective'][mem_i].update({'dir' : subdir})
 
     def analyze(self):
         # setup container
@@ -473,7 +474,7 @@ class PointDefectInsertion(Study):
         
         # read in potential energy from last thermo output
         for mem_i in range(self.input_yml['members']):
-            subdir = self.state['runs'][mem_i]['dir']
+            subdir = self.state['pristine'][mem_i]['dir']
 
             pris_log = LmpLog(file_path=subdir/'pristine.log')
             pris_e = pris_log.data['PotEng'][-1]
