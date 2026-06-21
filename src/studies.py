@@ -34,7 +34,7 @@ class LmpJob:
             lmp_fp.name]
         
         self.process = subprocess.Popen(self.lammps_cmd, cwd=self.member_dir, stdout=self.outfile, stderr=subprocess.STDOUT)
-        logger.debug(f'Launching LAMMPS for T={self.member_dir.parent.name} and member={self.member_dir.name}...')
+        logger.debug(f'Launching LAMMPS for sim={self.member_dir.parent.name} and member={self.member_dir.name}...')
 
     def poll(self):
         poll =self.process.poll()
@@ -105,10 +105,13 @@ class Study:
             self.restart = False
             self.dir = next_path(Path(self.input_yml['dir']) / self.name)
 
-    def run_lammps(self, state: dict, lmp_fn = 'main.in'):
+    def run_lammps(self, state: dict, sim_ids: list = None, lmp_fn = 'main.in'):
         """Continuously launch LAMMPS in parallel until all simulations and members have finished running."""
+        if not sim_ids:
+            sim_ids = self.sim_ids
+
         # replace 0 with jobs as they're scheduled 
-        jobs = {sim_i: {mem_i: 0 for mem_i in state[sim_i].keys()} for sim_i in self.sim_ids}
+        jobs = {sim_i: {mem_i: 0 for mem_i in state[sim_i].keys()} for sim_i in sim_ids}
 
         def check_status(status: int, return_next=False, return_all=False):
             """Helper function for determining which jobs to run next based on status (0 = ready, 1 = running, 2 = finished)."""
@@ -143,7 +146,7 @@ class Study:
                 return num_status
         
         tot_num_jobs = 0
-        for sim_i in self.sim_ids:
+        for sim_i in sim_ids:
             tot_num_jobs += len(state[sim_i])
 
         # make sure while loop does not run forever due to insufficient number of processors
@@ -368,8 +371,9 @@ class GenerateConfigurations(Study):
 class PointDefectInsertion(Study):
     def init_state(self):
         # setup containers
-        self.sim_ids = ['runs']
-        self.state.update({'runs': {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}})
+        self.sim_ids = ['pristine', 'defective']
+        mem_dict = {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}
+        self.state.update({sim_i: deepcopy(mem_dict) for sim_i in self.sim_ids})
 
         # add elements parameter for defining potential
         self.params.update({'elements': tilps(list(self.input_yml['composition'].keys()))})
@@ -394,18 +398,18 @@ class PointDefectInsertion(Study):
             if self.params['members'] > len(dataset_configs):
                 raise ValueError(f"Number of members ({self.params['members']}) exceeds number of configurations available in dataset ({len(dataset_configs)})")
             
-            dataset_configs = [dataset_configs[i] for i in random_range(0, self.params['members'])]
+            dataset_configs = [dataset_configs[i] for i in random_range(0, len(dataset_configs))]
 
         # define input files for each member
         for mem_i in range(self.params['members']):
             # main input files for perfect and defective systems
             pris_in = LmpInput(file_path=self.templates_dir/'pristine.in')
             pris_in.add_params(self.params)
-            self.state['runs'][mem_i]['input_files'].update({'pristine.in': pris_in})
+            self.state['pristine'][mem_i]['input_files'].update({'pristine.in': pris_in})
             
             def_in = LmpInput(file_path=self.templates_dir/'defective.in')
             def_in.add_params(self.params)
-            self.state['runs'][mem_i]['input_files'].update({'defective.in': def_in})
+            self.state['defective'][mem_i]['input_files'].update({'defective.in': def_in})
             
             # either load a configuration or make one from scratch
             if 'dataset' in self.input_yml.keys():
@@ -418,7 +422,7 @@ class PointDefectInsertion(Study):
     def run_lammps(self):
         # relax pristine system first
         logger.debug(f'Starting with first set of LAMMPS simulations for pristine system')
-        super().run_lammps(self.state, lmp_fn='pristine.in')
+        super().run_lammps(self.state, sim_ids=['pristine'], lmp_fn='pristine.in')
 
         # insert point defect into pristine system
         for mem_i in range(self.params['members']):
@@ -434,7 +438,7 @@ class PointDefectInsertion(Study):
                 def_species = self.input_yml['int_species']
                 def_orientation = str(self.input_yml['int_orient'])
 
-            pris_struct: LmpStructure = self.state['runs'][mem_i]['input_files']['pristine.in']
+            pris_struct: LmpStructure = self.state['runs'][mem_i]['input_files']['pristine.struct']
             pris_lat_params = {
                 'lattice': pris_struct.lattice,
                 'size': pris_struct.size,
@@ -448,7 +452,7 @@ class PointDefectInsertion(Study):
         
         # relax defective system
         logger.debug(f'Running second set of LAMMPS simulations for defective system')
-        super().run_lammps(self.state, lmp_fn='defective.in')
+        super().run_lammps(self.state, sim_ids=['defective'], lmp_fn='defective.in')
             
     def build_directory(self):
         super().build_directory()

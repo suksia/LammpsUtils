@@ -86,7 +86,7 @@ class LmpStructure(LmpFile):
         super().__init__(file_path=file_path)
 
         # build structure from scratch as a random disorded alloy (reduces to bulk metal for single component)
-        if file_path is None:
+        if file_path is None and lattice_params is not None:
             self.create_lattice(lattice_params)
             
     def create_lattice(self, params):
