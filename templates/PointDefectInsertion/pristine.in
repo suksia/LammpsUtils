@@ -2,7 +2,7 @@ units metal
 atom_style atomic
 boundary p  p  p
 
-read_data pristine.in
+read_data pristine.struct
 
 pair_style ?pair_style?
 pair_coeff * * ?potential? ?elements?

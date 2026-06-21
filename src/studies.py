@@ -376,8 +376,8 @@ class PointDefectInsertion(Study):
 
         # minimization stopping criteria
         self.params.update({
-            'etol': f'{self.input_yml['minimize'][0]:.2e}',
-            'ftol': f'{self.input_yml['minimize'][1]:.2e}',
+            'etol': f"{self.input_yml['minimize'][0]:.2e}",
+            'ftol': f"{self.input_yml['minimize'][1]:.2e}",
             'maxiter': unprefix(self.input_yml['minimize'][2]),
             'maxeval': unprefix(self.input_yml['minimize'][3])
         })
@@ -413,7 +413,7 @@ class PointDefectInsertion(Study):
             else:
                 pris_struct = LmpStructure(lattice_params=self.params)
 
-            self.state['runs'][mem_i]['input_files'].update({'pristine.in': pris_struct})
+            self.state['runs'][mem_i]['input_files'].update({'pristine.struct': pris_struct})
 
     def run_lammps(self):
         # relax pristine system first
@@ -444,7 +444,7 @@ class PointDefectInsertion(Study):
             def_struct: LmpStructure = pris_dump.to_struct(pris_lat_params)
             def_struct.insert_point_defect(def_type, def_species, def_orientation)
 
-            self.state['runs'][mem_i]['input_files'].update({'defective.in': def_struct})
+            self.state['runs'][mem_i]['input_files'].update({'defective.struct': def_struct})
         
         # relax defective system
         logger.debug(f'Running second set of LAMMPS simulations for defective system')
