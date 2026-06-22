@@ -222,7 +222,6 @@ class GenerateConfigurations(Study):
             'equil': unprefix(self.input_yml['equil']),
             'mc_freq': unprefix(self.input_yml['mc'][0]),
             'mc_attempts': unprefix(self.input_yml['mc'][1]),
-            'mc_thermo_freq': max(1, int(unprefix(0.50*self.input_yml['mc'][1]))),
             'mc': unprefix(self.input_yml['mc'][2]),
             'snapshot': unprefix(self.input_yml['snapshot'])
         })

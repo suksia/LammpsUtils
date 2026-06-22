@@ -3,7 +3,7 @@ from pathlib import Path
 from studies import Study, study_registry
 
 # basic logger
-logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format='[%(asctime)s)] %(message)s', datefmt='%H:%M:%S')
+logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format='[%(asctime)s] %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger('LammpsUtils')
 
 # define environment variable so LAMMPS can find potentials without needing a valid relative path
