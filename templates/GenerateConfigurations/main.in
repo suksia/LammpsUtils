@@ -77,6 +77,6 @@ thermo_style custom step pe press vol
 thermo 50
 
 min_style cg
-minimize 1.0e-5 1.0e-5 10000 1000000
+minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
 write_dump all custom final.dump id type x y z

@@ -222,9 +222,17 @@ class GenerateConfigurations(Study):
             'equil': unprefix(self.input_yml['equil']),
             'mc_freq': unprefix(self.input_yml['mc'][0]),
             'mc_attempts': unprefix(self.input_yml['mc'][1]),
-            'mc_thermo_freq': max(1, int(unprefix(0.25*self.input_yml['mc'][1]))),
+            'mc_thermo_freq': max(1, int(unprefix(0.50*self.input_yml['mc'][1]))),
             'mc': unprefix(self.input_yml['mc'][2]),
             'snapshot': unprefix(self.input_yml['snapshot'])
+        })
+
+        # minimization stopping criteria
+        self.params.update({
+            'etol': f"{self.input_yml['minimize'][0]:.2e}",
+            'ftol': f"{self.input_yml['minimize'][1]:.2e}",
+            'maxiter': unprefix(self.input_yml['minimize'][2]),
+            'maxeval': unprefix(self.input_yml['minimize'][3])
         })
 
         if 'wc_shell' not in self.input_yml.keys():
@@ -510,66 +518,67 @@ class PointDefectDiffusion(Study):
         self.sim_ids = self.input_yml['temperatures']
         if type(self.sim_ids) != list:
             self.sim_ids = [self.sim_ids]
+        mem_dict = {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}
+        self.state.update({sim_i: deepcopy(mem_dict) for sim_i in self.sim_ids})
 
-        # update common parameters
-        self.params['equil'] = unprefix(self.input_yml['equil'])
-        self.params['diffusion'] = unprefix(self.input_yml['diffusion'])
-        self.params['snapshot'] = unprefix(self.input_yml['snapshot'])
-        self.params['num_snapshots'] = int(self.input_yml['diffusion'] / self.input_yml['snapshot'])
+        # common parameters
+        self.params.update({
+            'equil': unprefix(self.input_yml['equil']),
+            'diffusion': unprefix(self.input_yml['diffusion']),
+            'snapshot': unprefix(self.input_yml['snapshot']),
+            'num_snapshots': int(self.input_yml['diffusion'] / self.input_yml['snapshot']),
+            'etol': f"{self.input_yml['minimize'][0]:.2e}",
+            'ftol': f"{self.input_yml['minimize'][1]:.2e}",
+            'maxiter': unprefix(self.input_yml['minimize'][2]),
+            'maxeval': unprefix(self.input_yml['minimize'][3])
+        })
 
-        # define common input_files
-        main_in = LmpInput(file_path=self.templates_dir/'main.in')
-        main_in.add_params(self.params)
-
-        diffusion_in = LmpInput(file_path=self.templates_dir/'diffusion.in')
-        diffusion_in.add_params(self.params)
-
-        if self.input_yml['quench'] == False:
-            quench_in = LmpInput()
+        # information for inserting point defect
+        if self.input_yml['defect'] == 'vac':
+            def_type = 'vac'
+            def_species = None
+            def_orientation = None
         else:
-            quench_in = LmpInput(file_path=self.templates_dir/'quench.in')
-            quench_in.add_params(self.params)
+            def_type = self.input_yml['int_type']
+            def_species = self.input_yml['int_species']
+            def_orientation = str(self.input_yml['int_orient'])
 
-        # self.state has an additional layer to iterate over configurations
-        for conf_i in range(self.input_yml['configurations']):
-            conf_dict = {sim_i: {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])} for sim_i in self.sim_ids}
-
-            # sample a configuration and insert a point defect
-            struct_in = LmpStructure(self.params)
-
-            if self.input_yml['defect'] == 'vac':
-                def_type = 'vac'
-                def_species = None
-                def_orientation = None
-            else:
-                def_type = self.input_yml['int_type']
-                def_species = self.input_yml['int_species']
-                def_orientation = str(self.input_yml['int_orient'])
+        # randomly choose configurations
+        if 'dataset' in self.input_yml.keys():
+            dataset_dir = Path(self.input_yml['dataset'])
+            if not dataset_dir.exists():
+                raise ValueError(f'Dataset directory {dataset_dir} does not exist')
             
-            struct_in.insert_point_defect(def_type, def_species, def_orientation)
+            dataset_configs = [fp for fp in dataset_dir.iterdir() if fp.is_file()]
 
-            # define seeds for initializing velocities for all members
-            seeds = {}
-            while len(seeds) < len(self.sim_ids)*self.params['members']:
-                seeds.update({random.randint(0, 100000): None})
-            seeds = list(seeds.keys())
+            # make sure there are enough configurations
+            if len(self.sim_ids)*self.params['members'] > len(dataset_configs):
+                raise ValueError(f"Number of simulations and members ({len(self.sim_ids)*self.params['members']}) exceeds number of configurations available in dataset ({len(dataset_configs)})")
+            
+            dataset_configs = [dataset_configs[i] for i in random_range(0, len(dataset_configs))]
+        
+        # define seeds initializing velocity
+        vel_seeds = create_seeds(len(self.sim_ids)*self.params['members'])
 
-            # define input files for all temperatures and members (just equil.in is unique to each member) 
-            i = 0
-            for sim_i in self.sim_ids:
-                self.params['temp'] = sim_i
+        for i, sim_i in enumerate(self.sim_ids):
+            self.params['temp'] = sim_i
 
-                for mem_i in range(self.params['members']):
-                    self.params['seed'] = seeds[i]
+            for mem_i in range(self.params['members']):
+                j = i*self.params['members']+mem_i
+                self.params['seed'] = vel_seeds[j]             
+                
+                main_in = LmpInput(file_path=self.templates_dir/'main.in')
+                main_in.add_params(self.params)
+                self.state[sim_i][mem_i]['input_files'].update({'main.in': main_in})
 
-                    equil_in = LmpInput(file_path=self.templates_dir/'equil.in')
-                    equil_in.add_params(self.params)
+                # either load a configuration or make one from scratch
+                if 'dataset' in self.input_yml.keys():
+                    struct = LmpStructure(file_path=dataset_configs[j])
+                else:
+                    struct = LmpStructure(lattice_params=self.params)
 
-                    for lf in [main_in, struct_in, equil_in, diffusion_in, quench_in]:
-                        conf_dict[sim_i][mem_i]['input_files'].update({lf.fn: lf})
-                    i += 1
-
-            self.state.update({conf_i: conf_dict})
+                struct.insert_point_defect(def_type, def_species, def_orientation)
+                self.state[sim_i][mem_i]['input_files'].update({'config.struct': struct})
     
     def build_directory(self):
         super().build_directory()
@@ -601,3 +610,17 @@ class PointDefectDiffusion(Study):
         # 4. Save Emig and repeat 1-3 for each configuration
 
         self.data.update()
+
+
+# define common input_files
+        main_in = LmpInput(file_path=self.templates_dir/'main.in')
+        main_in.add_params(self.params)
+
+        diffusion_in = LmpInput(file_path=self.templates_dir/'diffusion.in')
+        diffusion_in.add_params(self.params)
+
+        if self.input_yml['quench'] == False:
+            quench_in = LmpInput()
+        else:
+            quench_in = LmpInput(file_path=self.templates_dir/'quench.in')
+            quench_in.add_params(self.params)
