@@ -474,17 +474,14 @@ class PointDefectInsertion(Study):
         
         # read in potential energy from last thermo output
         for mem_i in range(self.input_yml['members']):
-            subdir = self.state['pristine'][mem_i]['dir']
+            energies_log =  LmpLog(file_path=self.state['pristine'][mem_i]['dir']/'energies.log')
 
-            pris_log = LmpLog(file_path=subdir/'energies.log')
-            pris_e = pris_log.data['PotEng'][-2]
-
-            def_log = LmpLog(file_path=subdir/'energies.log')
-            def_e = def_log.data['PotEng'][-1]
+            pris_e = energies_log.data['PotEng'][0]
+            def_e = energies_log.data['PotEng'][1]
 
             self.data['pristine_e'].append(pris_e)
             self.data['defective_e'].append(def_e)
-            self.data['insertion_e'].append(pris_e-def_e)
+            self.data['insertion_e'].append(def_e-pris_e)
 
         # bin energy data
         self.data.update({'insertion_histogram': np.histogram(self.data['insertion_e'], bins=40)})

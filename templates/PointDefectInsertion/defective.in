@@ -19,5 +19,5 @@ minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
 write_dump all custom defective.dump id type x y z
 
-log energies.out append
+log energies.log append
 run 0
