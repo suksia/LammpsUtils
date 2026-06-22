@@ -105,20 +105,20 @@ class Study:
             self.restart = False
             self.dir = next_path(Path(self.input_yml['dir']) / self.name)
 
-    def run_lammps(self, state: dict, sim_ids: list = None, lmp_fn = 'main.in'):
+    def run_lammps(self, sim_ids: list = None, lmp_fn = 'main.in'):
         """Continuously launch LAMMPS in parallel until all simulations and members have finished running."""
         if not sim_ids:
             sim_ids = self.sim_ids
 
         # replace 0 with jobs as they're scheduled 
-        jobs = {sim_i: {mem_i: 0 for mem_i in state[sim_i].keys()} for sim_i in sim_ids}
+        jobs = {sim_i: {mem_i: 0 for mem_i in self.state[sim_i].keys()} for sim_i in sim_ids}
 
         def check_status(status: int, return_next=False, return_all=False):
             """Helper function for determining which jobs to run next based on status (0 = ready, 1 = running, 2 = finished)."""
             if return_next:
                 next_found = False
-                for sim_i in self.sim_ids:
-                    for mem_i, mem_dict in state[sim_i].items():
+                for sim_i in sim_ids:
+                    for mem_i, mem_dict in self.state[sim_i].items():
                         if mem_dict['status'] == status:
                             next_found = True
                             break
@@ -131,23 +131,23 @@ class Study:
             
             elif return_all:
                 kw_pairs = []
-                for sim_i in self.sim_ids:
-                    for mem_i, mem_dict in state[sim_i].items():
+                for sim_i in sim_ids:
+                    for mem_i, mem_dict in self.state[sim_i].items():
                         if mem_dict['status'] == status:
                             kw_pairs.append((sim_i, mem_i))
                 return kw_pairs
 
             else:
                 num_status = 0
-                for sim_i in self.sim_ids:
-                    for mem_dict in state[sim_i].values():
+                for sim_i in sim_ids:
+                    for mem_dict in self.state[sim_i].values():
                         if mem_dict['status'] == status:
                             num_status += 1
                 return num_status
         
         tot_num_jobs = 0
         for sim_i in sim_ids:
-            tot_num_jobs += len(state[sim_i])
+            tot_num_jobs += len(self.state[sim_i])
 
         # make sure while loop does not run forever due to insufficient number of processors
         ntasks_per_job = math.floor(NTASKS / self.input_yml['processors'])
@@ -166,7 +166,7 @@ class Study:
                 job: LmpJob = jobs[sim_i][mem_i]
                 job.poll()
                 if job.finished and not job.counted:
-                    state[sim_i][mem_i]['status'] = 2
+                    self.state[sim_i][mem_i]['status'] = 2
                     restart_file.write(f'{sim_i}\t{mem_i}\n')
                     logger.debug(f'LAMMPS finished for sim={sim_i} and member={mem_i}')
 
@@ -177,20 +177,20 @@ class Study:
                 if self.restart:
                     if sim_i in self.restart.keys():
                         if mem_i in self.restart[sim_i]:
-                            state[sim_i][mem_i]['status'] = 2
+                            self.state[sim_i][mem_i]['status'] = 2
                             restart_file.write(f'{sim_i}\t{mem_i}\n')
                             logger.debug(f'LAMMPS has already been run for sim={sim_i} and member={mem_i}. Skipping it')
                             continue
 
-                job_dir: Path = state[sim_i][mem_i]['dir']
+                job_dir: Path = self.state[sim_i][mem_i]['dir']
 
                 # write input files
-                for fn, lmpfile in state[sim_i][mem_i]['input_files'].items():
+                for fn, lmpfile in self.state[sim_i][mem_i]['input_files'].items():
                     lmpfile.write_to_file(job_dir/fn)
 
                 # run LAMMPS and save process
                 jobs[sim_i][mem_i] = LmpJob(job_dir/lmp_fn, self.params['processors'])
-                state[sim_i][mem_i]['status'] = 1
+                self.state[sim_i][mem_i]['status'] = 1
         
         restart_file.close()
 
@@ -417,7 +417,21 @@ class PointDefectInsertion(Study):
             else:
                 pris_struct = LmpStructure(lattice_params=self.params)
 
-            self.state['defective'][mem_i]['input_files'].update({'pristine.struct': pris_struct})
+            self.state['pristine'][mem_i]['input_files'].update({'pristine.struct': pris_struct})
+
+    def build_directory(self):
+        super().build_directory()
+        self.dir.mkdir(exist_ok=True)
+
+        # self.state[sim_id] dict should only have keys that are member indices
+        runs_dir: Path = self.dir / 'runs'
+        runs_dir.mkdir(exist_ok=True)
+
+        for mem_i in range(self.input_yml['members']):
+            subdir = runs_dir / str(mem_i)
+            subdir.mkdir(exist_ok=True)
+            self.state['pristine'][mem_i].update({'dir' : subdir})
+            self.state['defective'][mem_i].update({'dir' : subdir})
 
     def run_lammps(self):
         # relax pristine system first
@@ -453,20 +467,6 @@ class PointDefectInsertion(Study):
         # relax defective system
         logger.debug(f'Running second set of LAMMPS simulations for defective system')
         super().run_lammps(self.state, sim_ids=['defective'], lmp_fn='defective.in')
-            
-    def build_directory(self):
-        super().build_directory()
-        self.dir.mkdir(exist_ok=True)
-
-        # self.state[sim_id] dict should only have keys that are member indices
-        runs_dir: Path = self.dir / 'runs'
-        runs_dir.mkdir(exist_ok=True)
-
-        for mem_i in range(self.input_yml['members']):
-            subdir = runs_dir / str(mem_i)
-            subdir.mkdir(exist_ok=True)
-            self.state['pristine'][mem_i].update({'dir' : subdir})
-            self.state['defective'][mem_i].update({'dir' : subdir})
 
     def analyze(self):
         # setup container

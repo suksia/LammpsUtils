@@ -496,4 +496,8 @@ class LmpDump(LmpFile):
         
         struct.num_types = len(struct.composition)
 
+        for i, el in enumerate(struct.composition.keys()):
+            i += 1
+            struct.species_to_type.update({el: i})
+
         return struct
