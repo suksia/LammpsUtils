@@ -150,8 +150,8 @@ class Study:
             tot_num_jobs += len(self.state[sim_i])
 
         # make sure while loop does not run forever due to insufficient number of processors
-        ntasks_per_job = math.floor(NTASKS / self.input_yml['processors'])
-        if ntasks_per_job < 1:
+        max_parallel_njobs = math.floor(NTASKS / self.input_yml['processors'])
+        if max_parallel_njobs < 1:
             raise ValueError(f"{NTASKS} processors available. Not enough for a single job ({self.input_yml['processors']})")
         
         # replace restart file with a copy that can be updated
@@ -171,7 +171,7 @@ class Study:
                     logger.debug(f'LAMMPS finished for sim={sim_i} and member={mem_i}')
 
             # launch a job if possible
-            if num_running < ntasks_per_job and num_running < num_left:
+            if num_running < max_parallel_njobs and num_left:
                 sim_i, mem_i = check_status(0, return_next=True)
                 
                 if self.restart:
