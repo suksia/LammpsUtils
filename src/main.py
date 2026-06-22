@@ -23,6 +23,7 @@ def main():
     # load user input
     with open(input_fp, 'r') as f:
         input_params: dict = yaml.safe_load(f)
+    with open(input_fp, 'r') as f:
         input_params_lines = f.readlines()
     logger.debug(f'Loaded input file {input_fp}')
 

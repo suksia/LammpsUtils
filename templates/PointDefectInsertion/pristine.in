@@ -19,3 +19,6 @@ min_style cg
 minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
 write_dump all custom pristine.dump id type x y z
+
+log energies.out
+run 0

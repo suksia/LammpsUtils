@@ -269,7 +269,7 @@ class GenerateConfigurations(Study):
         self.dataset_dir.mkdir(exist_ok=True)
 
     def run_lammps(self):
-        super().run_lammps(self.state)
+        super().run_lammps()
 
         # convert final configuration dumps into LAMMPS input files and save to dataset folder
         for mem_i in range(self.params['members']):
@@ -436,7 +436,7 @@ class PointDefectInsertion(Study):
     def run_lammps(self):
         # relax pristine system first
         logger.debug(f'Starting with first set of LAMMPS simulations for pristine system')
-        super().run_lammps(self.state, sim_ids=['pristine'], lmp_fn='pristine.in')
+        super().run_lammps(sim_ids=['pristine'], lmp_fn='pristine.in')
 
         # insert point defect into pristine system
         for mem_i in range(self.params['members']):
@@ -466,7 +466,7 @@ class PointDefectInsertion(Study):
         
         # relax defective system
         logger.debug(f'Running second set of LAMMPS simulations for defective system')
-        super().run_lammps(self.state, sim_ids=['defective'], lmp_fn='defective.in')
+        super().run_lammps(sim_ids=['defective'], lmp_fn='defective.in')
 
     def analyze(self):
         # setup container
@@ -476,10 +476,10 @@ class PointDefectInsertion(Study):
         for mem_i in range(self.input_yml['members']):
             subdir = self.state['pristine'][mem_i]['dir']
 
-            pris_log = LmpLog(file_path=subdir/'pristine.log')
-            pris_e = pris_log.data['PotEng'][-1]
+            pris_log = LmpLog(file_path=subdir/'energies.log')
+            pris_e = pris_log.data['PotEng'][-2]
 
-            def_log = LmpLog(file_path=subdir/'defective.log')
+            def_log = LmpLog(file_path=subdir/'energies.log')
             def_e = def_log.data['PotEng'][-1]
 
             self.data['pristine_e'].append(pris_e)
