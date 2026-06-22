@@ -365,7 +365,7 @@ class LmpLog:
             self.data[key] = []
 
         for i in range(len(start)):
-            for line in self.lines[start[i]+1:stop[i]]:
+            for line in self.lines[start[i]+1:stop[i]+1]:
                 line = strip_split(line)
                 for j, val in enumerate(line):
                     self.data[data_labels[j]].append(float(val))
