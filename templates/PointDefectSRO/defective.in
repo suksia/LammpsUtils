@@ -14,7 +14,7 @@ fix mc all atom/swap 1 ?mc_attempts? ?mc_seed? ?temp? types 1 2
 
 variable acc_ratio equal "ternary(f_mc[1] > 0, f_mc[2]/f_mc[1], 0.0)"
 
-thermo_style custom step etotal press enthalpy v_acc_ratio
+thermo_style custom step pe press enthalpy v_acc_ratio
 thermo 1
 
 dump 1 all custom ?snapshot? mc.dump id type x y z
@@ -34,6 +34,8 @@ next i
 jump SELF loop
 
 write_dump all custom defective.dump id type x y z
+
+thermo_modify custom step pe press vol enthalpy
 
 log energies.log append
 run 0

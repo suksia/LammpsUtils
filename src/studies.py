@@ -526,6 +526,8 @@ class PointDefectInsertion(Study):
 @register_study
 class PointDefectSRO(PointDefectInsertion):
     def init_state(self):
+        super().init_state()
+
         # update params common to all members/configurations
         self.params.update({
             'temp': self.input_yml['temperature'],
@@ -537,8 +539,10 @@ class PointDefectSRO(PointDefectInsertion):
         # define seeds for atom/swap RNG and add them to defective input files
         mc_seeds = create_seeds(self.params['members'])
         for mem_i in range(self.params['members']):
+            self.params.update({'mc_seed': mc_seeds[mem_i]})
+            
             def_in: LmpInput = self.state['defective'][mem_i]['input_files']['defective.in']
-            def_in.add_params({'mc_seed': mc_seeds[mem_i]})
+            def_in.add_params(self.params)
 
 @register_study
 class PointDefectDiffusion(Study):

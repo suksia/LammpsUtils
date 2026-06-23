@@ -11,7 +11,7 @@ neighbor ?skin? bin
 neigh_modify every 1 delay 0 check yes
 
 log pristine.log
-thermo_style custom step pe press vol
+thermo_style custom step pe press vol enthalpy
 thermo 25
 
 fix 1 all box/relax iso 0.0
@@ -20,5 +20,6 @@ minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
 write_dump all custom pristine.dump id type x y z
 
+thermo 1
 log energies.log
 run 0
