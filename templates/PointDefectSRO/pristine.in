@@ -1,0 +1,24 @@
+units metal
+atom_style atomic
+boundary p  p  p
+
+read_data pristine.struct
+
+pair_style ?pair_style?
+pair_coeff * * ?potential? ?elements?
+
+neighbor ?skin? bin
+neigh_modify every 1 delay 0 check yes
+
+log pristine.log
+thermo_style custom step pe press vol
+thermo 25
+
+fix 1 all box/relax iso 0.0
+min_style cg
+minimize ?etol? ?ftol? ?maxiter? ?maxeval?
+
+write_dump all custom pristine.dump id type x y z
+
+log energies.log
+run 0

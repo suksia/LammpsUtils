@@ -45,21 +45,11 @@ class LmpFile:
 
 class LmpInput(LmpFile):
     def add_params(self, params: dict):
-        # loop through each string in each line and replace ?param? with params[param]
-        for i, line in enumerate(self.lines):
-            while '?' in line:
-                # pairs of indices corresponding to the starting ? and stopping ? for ?param?
-                p_idcs = [j for j, c in enumerate(line) if c == '?']
-                start, stop = p_idcs[0]+1, p_idcs[1]
-
-                # replace with the actual param val
-                p = line[start:stop]
-                assert p in params.keys(), f'LammpsInput: parameter {p} not a key in params dictionary'
-                line = re.sub(f'\?{p}\?', str(params[p]), line)
-
-            # update line
-            self.lines[i] = line
-
+        # loop through lines and replace ?param? with params[param]
+        for kw, val in params.items():
+            for i, line in enumerate(self.lines):
+                self.lines[i] = re.sub(f'\?{kw}\?', str(val), line)
+                
 class LmpStructure(LmpFile):
     """Input structure data file for LAMMPS which is a randomized bcc/fcc lattice of elements."""
     def __init__(self, file_path: Path = None, lattice_params: dict = None):

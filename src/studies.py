@@ -209,7 +209,7 @@ def register_study(cls):
     return cls
 
 @register_study
-class GenerateConfigurations(Study):
+class ShortRangeOrder(Study):
     def init_state(self):
         self.sim_ids = ['runs']
         self.state.update({'runs': {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}})
@@ -259,6 +259,23 @@ class GenerateConfigurations(Study):
 
             struct_in = LmpStructure(lattice_params=self.params)
             self.state['runs'][mem_i]['input_files'].update({'config.in': struct_in, 'main.in': main_in})
+
+    def load_structure(self):
+        # randomly choose configurations
+        if 'dataset' in self.input_yml.keys():
+            dataset_dir = Path(self.input_yml['dataset'])
+            if not dataset_dir.exists():
+                raise ValueError(f'Dataset directory {dataset_dir} does not exist')
+            
+            dataset_configs = [fp for fp in dataset_dir.iterdir() if fp.is_file()]
+
+            # make sure there are enough configurations
+            if self.params['members'] > len(dataset_configs):
+                raise ValueError(f"Number of members ({self.params['members']}) exceeds number of configurations available in dataset ({len(dataset_configs)})")
+            
+            dataset_configs = [dataset_configs[i] for i in random_range(0, len(dataset_configs))]
+        
+        # loop over 
 
     def build_directory(self):
         super().build_directory()
@@ -381,12 +398,10 @@ class PointDefectInsertion(Study):
         self.sim_ids = ['pristine', 'defective']
         mem_dict = {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}
         self.state.update({sim_i: deepcopy(mem_dict) for sim_i in self.sim_ids})
-
-        # add elements parameter for defining potential
-        self.params.update({'elements': tilps(list(self.input_yml['composition'].keys()))})
-
-        # minimization stopping criteria
+        
+        # update params common to all members/configurations
         self.params.update({
+            'elements': tilps(list(self.input_yml['composition'].keys())),
             'etol': f"{self.input_yml['minimize'][0]:.2e}",
             'ftol': f"{self.input_yml['minimize'][1]:.2e}",
             'maxiter': unprefix(self.input_yml['minimize'][2]),
@@ -507,6 +522,23 @@ class PointDefectInsertion(Study):
         plt.ylabel('Frequency')
         plt.savefig(self.dir/'insertion_histo.png', bbox_inches="tight")
         plt.close()
+
+@register_study
+class PointDefectSRO(PointDefectInsertion):
+    def init_state(self):
+        # update params common to all members/configurations
+        self.params.update({
+            'temp': self.input_yml['temperature'],
+            'mc_attempts': unprefix(self.input_yml['mc'][0]),
+            'mc_cycles': unprefix(self.input_yml['mc'][1]),
+            'snapshot': unprefix(self.input_yml['snapshot'])
+        })
+
+        # define seeds for atom/swap RNG and add them to defective input files
+        mc_seeds = create_seeds(self.params['members'])
+        for mem_i in range(self.params['members']):
+            def_in: LmpInput = self.state['defective'][mem_i]['input_files']['defective.in']
+            def_in.add_params({'mc_seed': mc_seeds[mem_i]})
 
 @register_study
 class PointDefectDiffusion(Study):
