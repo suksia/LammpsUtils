@@ -342,7 +342,7 @@ class ShortRangeOrder(Study):
 
     def save_data(self):
         # plot enthalpy
-        plt.errorbar(self.data['timesteps'], self.data['enthalpy'], yerr=self.data['enthalpy_std'], capsize=5, fmt='o')
+        plt.errorbar(self.data['timesteps'], self.data['enthalpy'], yerr=self.data['enthalpy_std'], capsize=5, fmt='--o')
         plt.xlabel('Timestep')
         plt.ylabel('Enthalpy [eV]')
         plt.savefig(self.dir/'enthalpy.png', bbox_inches="tight")
@@ -354,7 +354,7 @@ class ShortRangeOrder(Study):
                 e.write(f"{self.data['timesteps'][i]:<10} {self.data['enthalpy'][i]:<15.3f} {self.data['enthalpy_std'][i]:<5.3f}\n")
 
         # plot acceptance ratio
-        plt.errorbar(self.data['timesteps'], self.data['acc_ratio'], yerr=self.data['acc_ratio_std'], capsize=3)
+        plt.errorbar(self.data['timesteps'], self.data['acc_ratio'], yerr=self.data['acc_ratio_std'], capsize=3, fmt='--o')
         plt.ylim([0, 1])
         plt.xlabel('Timestep')
         plt.ylabel('Metropolis Acceptance Ratio')
@@ -365,9 +365,12 @@ class ShortRangeOrder(Study):
         for i in range(len(self.params['species']))[:-1]:
             for j in range(len(self.params['species']))[i+1:]:
                 pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
-                plt.errorbar(self.data['wc_timesteps'], self.data['wc'][:, i, j], yerr=self.data['enthalpy_std'], label=pair_str, capsize=5, fmt='o')
+                plt.errorbar(self.data['wc_timesteps'], self.data['wc'][:, i, j], yerr=self.data['wc_std'][:, i, j], label=pair_str, capsize=5, fmt='--o')
         
-        #plt.hlines(0, wc_dict['timesteps'][0], wc_dict['timesteps'][-1])
+        plt.hlines(0, self.data['wc_timesteps'][0], self.data['wc_timesteps'][-1], color='black', ls='--')
+        plt.xlabel('Timestep')
+        plt.ylabel('Warren-Cowley Parameter')
+        plt.legend()
         plt.savefig(self.dir/'wc.png', bbox_inches="tight" )
         plt.close()
 
@@ -381,10 +384,13 @@ class ShortRangeOrder(Study):
         for i in range(len(self.params['species']))[:-1]:
             for j in range(len(self.params['species']))[i+1:]:
                 pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
-                histo, bin_edges = np.histogram(self.data['wc_final'][:, i, j], bins=40)
-                plt.plot(bin_edges[:-1], histo)
+                histo, bin_edges = np.histogram(self.data['wc_final'][:, i, j], bins=40, density=True)
+                plt.bar(bin_edges[:-1], histo, label=pair_str, linewidth=1, edgecolor='navy', width=np.diff(bin_edges))
 
-        #plt.hlines(0, wc_dict['timesteps'][0], wc_dict['timesteps'][-1])
+        plt.vlines(0, 0, 1, color='black', ls='--')
+        plt.xlabel('Warren-Cowley Parameter')
+        plt.ylabel('Frequency')
+        plt.legend()
         plt.savefig(self.dir/'wc_final.png', bbox_inches="tight" )
         plt.close()
 
@@ -392,7 +398,7 @@ class ShortRangeOrder(Study):
         with open(self.dir/'wc_final.out', 'w') as f:
             for mem_i in range(self.params['members']):
                 f.write(str(mem_i)+'\n')
-                f.write(np.array2string(self.data['wc_final'][i, :, :])+'\n\n')
+                f.write(np.array2string(self.data['wc_final'][mem_i, :, :])+'\n\n')
         
             # compute average
             f.write('Average\n')

@@ -10,6 +10,7 @@ pair_coeff * * ?potential? ?elements?
 neighbor ?skin? bin
 neigh_modify every 1 delay 0 check yes
 
+fix int all nve
 fix mc all atom/swap 1 ?mc_attempts? ?mc_seed? ?temp? types 1 2
 
 variable acc_ratio equal "ternary(f_mc[1] > 0, f_mc[2]/f_mc[1], 0.0)"
