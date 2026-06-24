@@ -318,8 +318,8 @@ class ShortRangeOrder(Study):
             mc_dump = LmpDump(file_path=self.state['runs'][mem_i]['dir']/'mc.dump')
 
             # WC evolution over time for each member
-            for timestep, snapshot in mc_dump.frames.items():
-                wc[mem_i, timestep, :, :] = warren_cowley(
+            for i, snapshot in enumerate(mc_dump.frames.values()):
+                wc[mem_i, i, :, :] = warren_cowley(
                     self.params['wc_num_neighbors'], 
                     snapshot['position'], 
                     snapshot['type'], 
@@ -335,7 +335,7 @@ class ShortRangeOrder(Study):
                 np.array([final_frame['box']['xlo'], final_frame['box']['ylo'], final_frame['box']['zlo']]),
                 final_frame['boxsize'])
 
-        self.data['wc_timesteps'] = np.array(list(mc_dump.keys()))
+        self.data['wc_timesteps'] = np.array(list(mc_dump.frames.keys()))
         self.data['wc'] = np.mean(wc, axis=0)
         self.data['wc_std'] = np.std(wc, axis=0)
         self.data['wc_final'] = wc_final
