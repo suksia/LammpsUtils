@@ -1,10 +1,11 @@
-import logging, re, random
+import logging, re, random, math
 from pathlib import Path
 from copy import deepcopy
 import numpy as np
 from utils import *
 from masses import masses
 import matplotlib.pyplot as plt
+import pandas as pd
 
 logger = logging.getLogger('LammpsUtils')
 logging.getLogger("matplotlib").setLevel(logging.FATAL)
@@ -320,45 +321,50 @@ class LmpStructure(LmpFile):
 
             self.num_atoms += 1
 
-class LmpLog:
-    def __init__(self, file_path: Path):
-        self.path = file_path
-        self.lines = []
+class LmpLog(LmpFile):
+    """LAMMPS log file containing all thermo output data as a contiguous list."""
+    def load_from_file(self, read_path):
+        super().load_from_file(read_path)
 
-        with open(self.path, 'r') as log:
-            self.lines = log.readlines()
-        
+        # container where keys timesteps and vals are thermo data 
+        self.data = {}
+
         # determine which lines correspond to thermo data
         start, stop = [], []
         for i, line in enumerate(self.lines):
             line = strip_split(line)
             if len(line) == 0:
                 continue
-            elif line[0] == 'Per':
-                start.append(i+1)
+            elif line[0] == 'Step':
+                start.append(i)
             elif line[0] == 'Loop':
                 stop.append(i-1)
 
-        # determine name of each column in thermo data (shouldn't change within the same log file)
-        data_labels = None
+        # initialize column names for dataframe
+        column_names = set()
         for i in start:
-            new_data_labels = strip_split(self.lines[i])
-            if data_labels is None:
-                data_labels = new_data_labels
-            else:
-                assert data_labels == new_data_labels, \
-                    f'Thermo data labels changed between runs for log file at {self.path}'
-        
-        # load the data as one contiguous list
-        self.data: dict[str, list] = dict.fromkeys(data_labels)
-        for key in self.data.keys():
-            self.data[key] = []
+            data_labels = strip_split(self.lines[i])
+            for lab in data_labels[1:]:
+                column_names.add(lab)
+        self.column_names = tuple(column_names)
 
+        # load each thermo output as a {timestep: list} kwarg
         for i in range(len(start)):
+            current_data_labels = strip_split(self.lines[start[i]])[1:]
+
             for line in self.lines[start[i]+1:stop[i]+1]:
-                line = strip_split(line)
-                for j, val in enumerate(line):
-                    self.data[data_labels[j]].append(float(val))
+                vals = strip_split(line, as_type=float)
+                timestep, vals = int(vals[0]), vals[1:]
+                current_data = [math.nan]*len(self.column_names)
+
+                for j, val in enumerate(vals):
+                    lab = current_data_labels[j]
+                    current_data[self.column_names.index(lab)] = val
+
+                self.data.update({timestep: deepcopy(current_data)})
+
+        # construct dataframe for easy plotting           
+        self.data_df: pd.DataFrame = pd.DataFrame.from_dict(self.data, orient='index', columns=self.column_names)
 
     def plot_values(self, save_prefix:str = None):
         try:

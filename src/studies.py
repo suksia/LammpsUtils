@@ -223,11 +223,7 @@ class ShortRangeOrder(Study):
             'mc_freq': unprefix(self.input_yml['mc'][0]),
             'mc_attempts': unprefix(self.input_yml['mc'][1]),
             'mc': unprefix(self.input_yml['mc'][2]),
-            'snapshot': unprefix(self.input_yml['snapshot'])
-        })
-
-        # minimization stopping criteria
-        self.params.update({
+            'snapshot': unprefix(self.input_yml['snapshot']),
             'etol': f"{self.input_yml['minimize'][0]:.2e}",
             'ftol': f"{self.input_yml['minimize'][1]:.2e}",
             'maxiter': unprefix(self.input_yml['minimize'][2]),
@@ -259,23 +255,6 @@ class ShortRangeOrder(Study):
 
             struct_in = LmpStructure(lattice_params=self.params)
             self.state['runs'][mem_i]['input_files'].update({'config.in': struct_in, 'main.in': main_in})
-
-    def load_structure(self):
-        # randomly choose configurations
-        if 'dataset' in self.input_yml.keys():
-            dataset_dir = Path(self.input_yml['dataset'])
-            if not dataset_dir.exists():
-                raise ValueError(f'Dataset directory {dataset_dir} does not exist')
-            
-            dataset_configs = [fp for fp in dataset_dir.iterdir() if fp.is_file()]
-
-            # make sure there are enough configurations
-            if self.params['members'] > len(dataset_configs):
-                raise ValueError(f"Number of members ({self.params['members']}) exceeds number of configurations available in dataset ({len(dataset_configs)})")
-            
-            dataset_configs = [dataset_configs[i] for i in random_range(0, len(dataset_configs))]
-        
-        # loop over 
 
     def build_directory(self):
         super().build_directory()
@@ -311,6 +290,17 @@ class ShortRangeOrder(Study):
             dump.write_structure_file(new_struct_write_path, new_struct_params)
 
     def analyze(self):
+        # compute average enthalpy from mc.log files
+        enthalpy = np.zeros((self.params['mc']/self.params['mc_freq']+1, self.params['members']))
+        for mem_i in range(self.params['members']):
+            mc_log = LmpLog(self.state['runs'][mem_i]['dir']/'mc.log')
+
+            enthalpy[:, mem_i] = mc_log.data_df['Enthalpy'].to_numpy()
+
+        self.data['timesteps'] = mc_log.data_df.index.to_numpy()
+        self.data['enthalpy'] = np.mean(enthalpy, axis=1)
+        self.data['enthalpy_std'] = np.std(enthalpy, axis=1)
+        
         # compute Warren-Cowley parameters of all configurations
         for mem_i in range(self.params['members']):
             # compute parameters for all snapshots for plotting the evolution
@@ -347,6 +337,18 @@ class ShortRangeOrder(Study):
             self.state['runs'][mem_i]['wc'] = wc
     
     def save_data(self):
+        # plot enthalpy
+        plt.errorbar(self.data['timesteps'], self.data['enthalpy'], yerr=self.data['enthalpy_std'])
+        plt.xlabel('Timestep')
+        plt.ylabel('Enthalpy [eV]')
+        plt.savefig(self.dir/'enthalpy.png', bbox_inches="tight")
+        plt.close()
+
+        # write out enthalpy data
+        with open(self.dir/'enthalpy.out', 'w') as e:
+            for i in range(len(self.data['timesteps'])):
+                e.write(f"{self.data['timesteps'][i]:<10} {self.data['enthalpy'][i]:<12.3f} {self.data['enthalpy_std'][i]:<12.3f}")
+
         wc_final_file = open(self.dir / 'wc.out', 'w')
         all_wc_final = np.zeros((self.params['members'], len(self.params['species']), len(self.params['species'])))
 
