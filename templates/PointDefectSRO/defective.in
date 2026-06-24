@@ -17,15 +17,17 @@ variable acc_ratio equal "ternary(f_mc[1] > 0, f_mc[2]/f_mc[1], 0.0)"
 thermo_style custom step pe press enthalpy v_acc_ratio
 thermo 1
 
-dump 1 all custom ?snapshot? mc.dump id type x y z
-
 min_style cg
 
 variable i loop ?mc_cycles?
+variable s equal v_i % ?snapshot?
+
 label loop
 
+if "${s}==0" then "write_dump all custom mc.dump id type x y z modify append yes"
+
 log mc.log append
-run 1 pre no post no
+run 1 post no
 
 log min.log append
 minimize ?etol? ?ftol? ?maxiter? ?maxeval?
