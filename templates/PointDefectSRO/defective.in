@@ -25,17 +25,19 @@ variable i loop ?mc_cycles?
 label loop
 
 log mc.log append
-run 1 pre no post yes
+run 1 pre no post no
 
 log min.log append
 minimize ?etol? ?ftol? ?maxiter? ?maxeval?
+
+fix mc all atom/swap 1 ?mc_attempts? ?mc_seed? ?temp? types 1 2
 
 next i
 jump SELF loop
 
 write_dump all custom defective.dump id type x y z
 
-thermo_modify custom step pe press vol enthalpy
+thermo_style custom step pe press vol enthalpy
 
 log energies.log append
 run 0
