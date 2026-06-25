@@ -321,6 +321,13 @@ class LmpStructure(LmpFile):
 
             self.num_atoms += 1
 
+        # velocity set command in LAMMPS requires atom IDs to be consecutive
+        self.renumber_ids()
+
+    def renumber_ids(self):
+        """Redefine atom IDs to be consecutive."""
+        self.ids = np.arange(len(self.ids), dtype=np.int32)
+
 class LmpLog(LmpFile):
     """LAMMPS log file containing all thermo output data as a contiguous list."""
     def load_from_file(self, read_path):

@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from ovito.modifiers import WignerSeitzAnalysisModifier
 from ovito.io import import_file, export_file
-from typing import Any
 
 logger = logging.getLogger('LammpsUtils')
 logging.getLogger("matplotlib").setLevel(logging.FATAL)
@@ -342,7 +341,7 @@ class ShortRangeOrder(Study):
 
     def save_data(self):
         # plot enthalpy
-        plt.plot(self.data['timesteps'], self.data['enthalpy'], 'o', ms=2)
+        plt.plot(self.data['timesteps'], self.data['enthalpy'], '--o', ms=2)
         plt.fill_between(self.data['timesteps'], self.data['enthalpy']-self.data['enthalpy_std'], self.data['enthalpy']+self.data['enthalpy_std'], alpha=0.5)
         plt.xlabel('Timestep')
         plt.ylabel('Enthalpy [eV]')
@@ -355,7 +354,7 @@ class ShortRangeOrder(Study):
                 e.write(f"{self.data['timesteps'][i]:<10} {self.data['enthalpy'][i]:<15.3f} {self.data['enthalpy_std'][i]:<5.3f}\n")
 
         # plot acceptance ratio
-        plt.plot(self.data['timesteps'], self.data['acc_ratio'], 'o', ms=2)
+        plt.plot(self.data['timesteps'], self.data['acc_ratio'], '--o', ms=2)
         plt.fill_between(self.data['timesteps'], self.data['acc_ratio']-self.data['acc_ratio_std'], self.data['acc_ratio']+self.data['acc_ratio_std'], alpha=0.5)
         plt.ylim([0, 1])
         plt.xlabel('Timestep')
@@ -369,7 +368,7 @@ class ShortRangeOrder(Study):
                 pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
                 x, y = self.data['wc_timesteps'], self.data['wc'][:, i, j]
                 yerr = (y - self.data['wc_std'][:, i, j], y + self.data['wc_std'][:, i, j])
-                plt.plot(x, y, 'o', ms=2, label=pair_str)
+                plt.plot(x, y, '--o', ms=2, label=pair_str)
                 plt.fill_between(x, yerr[0], yerr[1], alpha=0.5)
         
         plt.hlines(0, self.data['wc_timesteps'][0], self.data['wc_timesteps'][-1], color='black', ls='--')

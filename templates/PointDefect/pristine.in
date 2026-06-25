@@ -18,6 +18,7 @@ fix 1 all box/relax iso 0.0
 min_style cg
 minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
+write_dump all custom pristine.dump id type x y z
 write_dump all custom quench.dump id type x y z
 
 thermo 1
