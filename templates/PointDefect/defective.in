@@ -1,0 +1,92 @@
+units metal
+atom_style atomic
+boundary p  p  p
+
+read_data defective.struct
+
+pair_style ?pair_style?
+pair_coeff * * ?potential? ?elements?
+
+neighbor ?skin? bin
+neigh_modify every 1 delay 0 check yes
+
+# -------- Energy minimize -------- #
+
+thermo_style custom step pe press
+thermo 10
+
+min_style cg
+minimize ?etol? ?ftol? ?maxiter? ?maxeval?
+
+# --------- Equilibration --------- #
+
+neigh_modify delay 10 check yes
+
+reset_timestep 0
+timestep ?timestep?
+
+fix 1 all nve
+fix 2 all langevin ?temp? ?temp? 100 ?thermo_seed?
+fix 3 all momentum 100 linear 1 1 1
+
+log equil.log
+thermo_style custom step etotal temp
+thermo 1000
+
+velocity all create ?temp? ?vel_seed?
+
+run ?equil?
+
+# ------------- MC+MD ------------- #
+
+reset_timestep 0
+ 
+fix mc all atom/swap ?mc_freq? ?mc_attempts? ?mc_seed? ?temp? types 1 2
+
+variable acc_ratio equal "ternary(f_mc[1] > 0, f_mc[2]/f_mc[1], 0.0)"
+
+log mc.log
+thermo_style custom step etotal press enthalpy v_acc_ratio
+thermo ?mc_freq?
+
+dump 1 all custom ?snapshot? mc.dump id type x y z
+
+run ?mc?
+
+unfix 1
+unfix 2
+unfix 3
+unfix mc
+undump 1
+
+# ------------ Quench ------------- #
+
+neigh_modify every 1 delay 0 check yes
+
+label loop
+
+log quench.log append
+thermo_style custom step pe press
+thermo 10
+
+variable tstep_idx loop ?num_snapshots?
+variable tstep equal v_tstep_idx*?snapshot?
+
+print "Timestep idx: ${tstep_idx}"
+print "Timestep: ${tstep}"
+
+read_dump mc.dump ${tstep} x y z replace yes
+
+reset_timestep 0
+
+minimize ?etol? ?ftol? ?maxiter? ?maxeval?
+
+reset_timestep ${tstep}
+write_dump all custom quench.dump id type x y z modify append yes
+
+thermo 1
+log energies.log append
+run 0
+
+next tstep_idx
+jump SELF loop

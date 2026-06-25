@@ -342,7 +342,8 @@ class ShortRangeOrder(Study):
 
     def save_data(self):
         # plot enthalpy
-        plt.errorbar(self.data['timesteps'], self.data['enthalpy'], yerr=self.data['enthalpy_std'], capsize=5, fmt='--o')
+        plt.plot(self.data['timesteps'], self.data['enthalpy'], 'o', ms=2)
+        plt.fill_between(self.data['timesteps'], self.data['enthalpy']-self.data['enthalpy_std'], self.data['enthalpy']+self.data['enthalpy_std'], alpha=0.5)
         plt.xlabel('Timestep')
         plt.ylabel('Enthalpy [eV]')
         plt.savefig(self.dir/'enthalpy.png', bbox_inches="tight")
@@ -354,7 +355,8 @@ class ShortRangeOrder(Study):
                 e.write(f"{self.data['timesteps'][i]:<10} {self.data['enthalpy'][i]:<15.3f} {self.data['enthalpy_std'][i]:<5.3f}\n")
 
         # plot acceptance ratio
-        plt.errorbar(self.data['timesteps'], self.data['acc_ratio'], yerr=self.data['acc_ratio_std'], capsize=3, fmt='--o')
+        plt.plot(self.data['timesteps'], self.data['acc_ratio'], 'o', ms=2)
+        plt.fill_between(self.data['timesteps'], self.data['acc_ratio']-self.data['acc_ratio_std'], self.data['acc_ratio']+self.data['acc_ratio_std'], alpha=0.5)
         plt.ylim([0, 1])
         plt.xlabel('Timestep')
         plt.ylabel('Metropolis Acceptance Ratio')
@@ -365,7 +367,10 @@ class ShortRangeOrder(Study):
         for i in range(len(self.params['species']))[:-1]:
             for j in range(len(self.params['species']))[i+1:]:
                 pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
-                plt.errorbar(self.data['wc_timesteps'], self.data['wc'][:, i, j], yerr=self.data['wc_std'][:, i, j], label=pair_str, capsize=5, fmt='--o')
+                x, y = self.data['wc_timesteps'], self.data['wc'][:, i, j]
+                yerr = (y - self.data['wc_std'][:, i, j], y + self.data['wc_std'][:, i, j])
+                plt.plot(x, y, 'o', ms=2)
+                plt.fill_between(x, yerr[0], yerr[0], alpha=0.5)
         
         plt.hlines(0, self.data['wc_timesteps'][0], self.data['wc_timesteps'][-1], color='black', ls='--')
         plt.xlabel('Timestep')
@@ -387,7 +392,7 @@ class ShortRangeOrder(Study):
                 histo, bin_edges = np.histogram(self.data['wc_final'][:, i, j], bins=40, density=True)
                 plt.bar(bin_edges[:-1], histo, label=pair_str, linewidth=1, edgecolor='navy', width=np.diff(bin_edges))
 
-        plt.vlines(0, 0, 1, color='black', ls='--')
+        plt.vlines(0, 0, 1.1*np.max(histo), color='black', ls='--')
         plt.xlabel('Warren-Cowley Parameter')
         plt.ylabel('Frequency')
         plt.legend()
@@ -405,7 +410,7 @@ class ShortRangeOrder(Study):
             f.write(np.array2string(np.average(self.data['wc_final'], axis=0)))
 
 @register_study
-class PointDefectInsertion(Study):
+class PointDefect(Study):
     def init_state(self):
         # setup containers
         self.sim_ids = ['pristine', 'defective']
@@ -414,12 +419,20 @@ class PointDefectInsertion(Study):
         
         # update params common to all members/configurations
         self.params.update({
+            'species': list(self.input_yml['composition'].keys()),
             'elements': tilps(list(self.input_yml['composition'].keys())),
+            'temp': self.input_yml['temperature'],
+            'equil': unprefix(self.input_yml['equil']),
+            'mc_freq': unprefix(self.input_yml['mc'][0]),
+            'mc_attempts': unprefix(self.input_yml['mc'][1]),
+            'mc': unprefix(self.input_yml['mc'][2]),
+            'snapshot': unprefix(self.input_yml['snapshot']),
             'etol': f"{self.input_yml['minimize'][0]:.2e}",
             'ftol': f"{self.input_yml['minimize'][1]:.2e}",
             'maxiter': unprefix(self.input_yml['minimize'][2]),
-            'maxeval': unprefix(self.input_yml['minimize'][3])
-        })
+            'maxeval': unprefix(self.input_yml['minimize'][3])})
+
+        self.params.update({'num_snapshots': int(self.params['mc']/self.params['snapshot'])+1})
 
         # randomly choose configurations
         if 'dataset' in self.input_yml.keys():
@@ -435,13 +448,24 @@ class PointDefectInsertion(Study):
             
             dataset_configs = [dataset_configs[i] for i in random_range(0, len(dataset_configs))]
 
+        # create seeds for thermostat, velocities, and atom/swap
+        seeds = create_seeds(3*self.params['members'])
+
         # define input files for each member
+        seed_idx = 0
         for mem_i in range(self.params['members']):
             # main input files for perfect and defective systems
             pris_in = LmpInput(file_path=self.templates_dir/'pristine.in')
             pris_in.add_params(self.params)
             self.state['pristine'][mem_i]['input_files'].update({'pristine.in': pris_in})
-            
+
+            self.params.update({
+                'thermo_seed': seeds[seed_idx],
+                'vel_seed': seeds[seed_idx+1],
+                'mc_seed': seeds[seed_idx+2],
+            })
+            seed_idx += 3
+
             def_in = LmpInput(file_path=self.templates_dir/'defective.in')
             def_in.add_params(self.params)
             self.state['defective'][mem_i]['input_files'].update({'defective.in': def_in})
@@ -458,7 +482,6 @@ class PointDefectInsertion(Study):
         super().build_directory()
         self.dir.mkdir(exist_ok=True)
 
-        # self.state[sim_id] dict should only have keys that are member indices
         runs_dir: Path = self.dir / 'runs'
         runs_dir.mkdir(exist_ok=True)
 
@@ -499,176 +522,83 @@ class PointDefectInsertion(Study):
 
             self.state['defective'][mem_i]['input_files'].update({'defective.struct': def_struct})
         
-        # relax defective system
+        # run MC+MD loop for defective system
         logger.debug(f'Running second set of LAMMPS simulations for defective system')
         super().run_lammps(sim_ids=['defective'], lmp_fn='defective.in')
-
-    def analyze(self):
-        # setup container
-        self.data.update({'pristine_e': [], 'defective_e': [], 'insertion_e': []})
-        
-        # read in potential energy from last thermo output
-        for mem_i in range(self.input_yml['members']):
-            energies_log =  LmpLog(file_path=self.state['pristine'][mem_i]['dir']/'energies.log')
-
-            pris_e = energies_log.data['PotEng'][0]
-            def_e = energies_log.data['PotEng'][1]
-
-            self.data['pristine_e'].append(pris_e)
-            self.data['defective_e'].append(def_e)
-            self.data['insertion_e'].append(def_e-pris_e)
-
-        # bin energy data
-        self.data.update({'insertion_histogram': np.histogram(self.data['insertion_e'], bins=40)})
     
-    def save_data(self):
-        # write the energies out
-        with open(self.dir/'energies.out', 'w') as e:
-            for mem_i in range(self.input_yml['members']):
-                line = f"{mem_i:<5} {self.data['pristine_e'][mem_i]:<15.5f} {self.data['defective_e'][mem_i]:<15.5f} {self.data['insertion_e'][mem_i]:<15.5f}"
-                e.write(line+'\n')
-        
-        # plot energy histogram
-        y, x = self.data['insertion_histogram']
-        plt.bar(x[:-1], y, linewidth=1, edgecolor='navy', width=np.diff(x))
-        plt.xlabel('Insertion Energy [eV]')
-        plt.ylabel('Frequency')
-        plt.savefig(self.dir/'insertion_histo.png', bbox_inches="tight")
-        plt.close()
+    def analyze(self):
+        # compute insertion energy evolution
+        e_pris = np.zeros(self.params['members'])
+        e_def = np.zeros((self.params['members'], self.params['num_snapshots']))
+        e_ins = np.zeros((self.params['members'], self.params['num_snapshots']))
 
-@register_study
-class PointDefectSRO(PointDefectInsertion):
-    def init_state(self):
-        super().init_state()
-
-        # update params common to all members/configurations
-        self.params.update({
-            'temp': self.input_yml['temperature'],
-            'mc_attempts': unprefix(self.input_yml['mc'][0]),
-            'mc_cycles': unprefix(self.input_yml['mc'][1]),
-            'snapshot': unprefix(self.input_yml['snapshot'])
-        })
-
-        # define seeds for atom/swap RNG and add them to defective input files
-        mc_seeds = create_seeds(self.params['members'])
         for mem_i in range(self.params['members']):
-            self.params.update({'mc_seed': mc_seeds[mem_i]})
-            
-            def_in: LmpInput = self.state['defective'][mem_i]['input_files']['defective.in']
-            def_in.add_params(self.params)
+            energies_log = LmpLog(self.state['runs'][mem_i]['dir']/'energies.log')
 
-@register_study
-class PointDefectDiffusion(Study):
-    """Samples configurations and computes the migration energy for each one by diffusing point defects."""
-    def init_state(self):
-        raise NotImplementedError()
-        # setup containers
-        self.sim_ids = self.input_yml['temperatures']
-        if type(self.sim_ids) != list:
-            self.sim_ids = [self.sim_ids]
-        mem_dict = {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}
-        self.state.update({sim_i: deepcopy(mem_dict) for sim_i in self.sim_ids})
+            e_pris[mem_i] = energies_log.data_df['pe'][0]
+            e_def[mem_i, :] = energies_log.data_df['pe'][1:].to_numpy()
 
-        # common parameters
-        self.params.update({
-            'equil': unprefix(self.input_yml['equil']),
-            'diffusion': unprefix(self.input_yml['diffusion']),
-            'snapshot': unprefix(self.input_yml['snapshot']),
-            'num_snapshots': int(self.input_yml['diffusion'] / self.input_yml['snapshot']),
-            'etol': f"{self.input_yml['minimize'][0]:.2e}",
-            'ftol': f"{self.input_yml['minimize'][1]:.2e}",
-            'maxiter': unprefix(self.input_yml['minimize'][2]),
-            'maxeval': unprefix(self.input_yml['minimize'][3])
-        })
+            e_ins[mem_i, :] = e_def[mem_i, :] - e_pris[mem_i]
 
-        # information for inserting point defect
-        if self.input_yml['defect'] == 'vac':
-            def_type = 'vac'
-            def_species = None
-            def_orientation = None
-        else:
-            def_type = self.input_yml['int_type']
-            def_species = self.input_yml['int_species']
-            def_orientation = str(self.input_yml['int_orient'])
+        self.data['timesteps'] = energies_log.data_df.index.to_numpy()
 
-        # randomly choose configurations
-        if 'dataset' in self.input_yml.keys():
-            dataset_dir = Path(self.input_yml['dataset'])
-            if not dataset_dir.exists():
-                raise ValueError(f'Dataset directory {dataset_dir} does not exist')
-            
-            dataset_configs = [fp for fp in dataset_dir.iterdir() if fp.is_file()]
+        self.data['e_pris'] = e_pris
+        self.data['e_def'] = e_def
+        self.data['e_ins'] = e_pris
 
-            # make sure there are enough configurations
-            if len(self.sim_ids)*self.params['members'] > len(dataset_configs):
-                raise ValueError(f"Number of simulations and members ({len(self.sim_ids)*self.params['members']}) exceeds number of configurations available in dataset ({len(dataset_configs)})")
-            
-            dataset_configs = [dataset_configs[i] for i in random_range(0, len(dataset_configs))]
-        
-        # define seeds initializing velocity
-        vel_seeds = create_seeds(len(self.sim_ids)*self.params['members'])
+        # obtain positions of defective cells
+        for mem_i in range(self.input_yml['members']):
+            pipeline = import_file(self.state['defective'][mem_i]['dir']/'quench.dump')
 
-        for i, sim_i in enumerate(self.sim_ids):
-            self.params['temp'] = sim_i
+            # outputs sites as particles DataCollection with "Occupancy" property
+            ws = WignerSeitzAnalysisModifier()
+            pipeline.modifiers.append(ws)
 
-            for mem_i in range(self.params['members']):
-                j = i*self.params['members']+mem_i
-                self.params['seed'] = vel_seeds[j]             
-                
-                main_in = LmpInput(file_path=self.templates_dir/'main.in')
-                main_in.add_params(self.params)
-                self.state[sim_i][mem_i]['input_files'].update({'main.in': main_in})
+            # custom modifier to obtain a vacancy position for each snapshot
+            def modify(frame, data):
+                # per-site occupancy (0 = vacancy, 1 = normal site, 2 = interstitial)
+                occupancies = data.particles['Occupancy']
 
-                # either load a configuration or make one from scratch
-                if 'dataset' in self.input_yml.keys():
-                    struct = LmpStructure(file_path=dataset_configs[j])
-                else:
-                    struct = LmpStructure(lattice_params=self.params)
+                # add a boolean "Selection" property which will be 1 only for pristine cells
+                selection = data.particles_.create_property('Selection')
+                selection[...] = occupancies != 1
 
-                struct.insert_point_defect(def_type, def_species, def_orientation)
-                self.state[sim_i][mem_i]['input_files'].update({'config.struct': struct})
-    
-    def build_directory(self):
-        super().build_directory()
-        self.dir.mkdir(exist_ok=True)
-        
-        for conf_i in range(self.input_yml['configurations']):
-            conf_subdir: Path = self.dir / conf_i
-            conf_subdir.mkdir(exist_ok=True)
+                # add a data attribute for the current frame which is the vacancy position
+                data.attributes['DefectCount'] = np.sum(selection)
+                data.attributes['DefectPosition']  = [data.particles.positions[selected_idx] for selected_idx in np.nonzero(selection)]
+                data.attributes['Occupancy'] = [data.particles['Occupancy'][selected_idx] for selected_idx in np.nonzero(selection)]
 
-            for sim_i in self.sim_ids:
-                sim_subdir: Path = conf_subdir / sim_i
-                sim_subdir.mkdir(exist_ok=True)
+            # write vacancy positions
+            pipeline.modifiers.append(modify)
+            export_file(
+                pipeline, 
+                self.state['defective'][mem_i]['dir']/'ovito.out', 
+                'txt/attr',
+                columns = ['Timestep', 'Occupancy', 'DefectCount', 'DefectPosition'],
+                multiple_frames = True)
 
-                for mem_i in range(self.input_yml['members']):
-                    mem_subdir: Path = sim_subdir / mem_i
-                    mem_subdir.mkdir(exist_ok=True)
-                    self.state[conf_i][sim_i][mem_i].update({'dir' : mem_subdir})
+    def save_data(self):
+        # write out pristine and defective energies
+        with open(self.dir/'energies.out', 'w') as e:
+            e.write(f'Timesteps: {np.array2string(self.data['timesteps'])}\n\n')
 
-    def run_lammps(self):
-        for conf_i in range(self.input_yml['configurations']):
-            self.run_lammps(self.state[conf_i])
+            for mem_i in range(self.input_yml['members']):
+                e.write(f'{mem_i:<5}  {self.data['e_pris'][mem_i]:<15.4f}  {np.array2string(self.data['e_def'][mem_i])}\n')
 
-    def analyze(self):
-        # compute Emig for each configuration
+        # compute and plot insertion energy histogram for first and last snapshot
+        first_histo, bin_edges = np.histogram(self.data['e_ins'][:, 0], bins=40, density=True)
+        last_histo, bin_edges = np.histogram(self.data['e_ins'][:, -1], bins=40, density=True)
 
-        # 1. Extract squared displacement curves from each member
-        # 2. Compute MSD for each temperature
-        # 3. Fit MSD to get D, fit D to get Emig for a temperature
-        # 4. Save Emig and repeat 1-3 for each configuration
+        fig, ax = plt.subplots(2, figsize=(10, 10))
 
-        self.data.update()
+        ax[0].bar(bin_edges[:-1], first_histo/np.max(first_histo), linewidth=1, edgecolor='navy', width=np.diff(bin_edges))
+        ax[1].bar(bin_edges[:-1], last_histo/np.max(first_histo), linewidth=1, edgecolor='navy', width=np.diff(bin_edges))
 
+        ax[0].vlines(0, 0, 1, color='black', ls='--')
+        ax[1].vlines(0, 0, 1, color='black', ls='--')
 
-# define common input_files
-        main_in = LmpInput(file_path=self.templates_dir/'main.in')
-        main_in.add_params(self.params)
+        fig.savefig(self.dir/'final_insertion.png', bbox_inches="tight")
 
-        diffusion_in = LmpInput(file_path=self.templates_dir/'diffusion.in')
-        diffusion_in.add_params(self.params)
+        # compute average insertion energy evolution
 
-        if self.input_yml['quench'] == False:
-            quench_in = LmpInput()
-        else:
-            quench_in = LmpInput(file_path=self.templates_dir/'quench.in')
-            quench_in.add_params(self.params)
+        # write out pristine and defective energies
