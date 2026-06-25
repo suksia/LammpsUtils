@@ -21,6 +21,8 @@ minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 write_dump all custom pristine.dump id type x y z
 write_dump all custom quench.dump id type x y z
 
+reset_timestep 0
+
 thermo 1
 log energies.log
 run 0

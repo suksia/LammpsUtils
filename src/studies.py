@@ -431,7 +431,7 @@ class PointDefect(Study):
             'maxiter': unprefix(self.input_yml['minimize'][2]),
             'maxeval': unprefix(self.input_yml['minimize'][3])})
 
-        self.params.update({'num_snapshots': int(self.params['mc']/self.params['snapshot'])+1})
+        self.params.update({'num_snapshots': int(self.params['mc']/self.params['snapshot'])-1})
 
         # randomly choose configurations
         if 'dataset' in self.input_yml.keys():
@@ -539,7 +539,7 @@ class PointDefect(Study):
 
             e_ins[mem_i, :] = e_def[mem_i, :] - e_pris[mem_i]
 
-        self.data['timesteps'] = energies_log.data_df.index.to_numpy()
+        self.data['timesteps'] = energies_log.data_df.index.to_numpy()[1:]
 
         self.data['e_pris'] = e_pris
         self.data['e_def'] = e_def

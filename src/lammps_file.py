@@ -326,7 +326,7 @@ class LmpStructure(LmpFile):
 
     def renumber_ids(self):
         """Redefine atom IDs to be consecutive."""
-        self.ids = np.arange(len(self.ids), dtype=np.int32)
+        self.ids = np.arange(1, len(self.ids)+1, dtype=np.int32)
 
 class LmpLog(LmpFile):
     """LAMMPS log file containing all thermo output data as a contiguous list."""
