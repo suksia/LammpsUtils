@@ -369,8 +369,8 @@ class ShortRangeOrder(Study):
                 pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
                 x, y = self.data['wc_timesteps'], self.data['wc'][:, i, j]
                 yerr = (y - self.data['wc_std'][:, i, j], y + self.data['wc_std'][:, i, j])
-                plt.plot(x, y, 'o', ms=2)
-                plt.fill_between(x, yerr[0], yerr[0], alpha=0.5)
+                plt.plot(x, y, 'o', ms=2, label=pair_str)
+                plt.fill_between(x, yerr[0], yerr[1], alpha=0.5)
         
         plt.hlines(0, self.data['wc_timesteps'][0], self.data['wc_timesteps'][-1], color='black', ls='--')
         plt.xlabel('Timestep')
@@ -392,7 +392,7 @@ class ShortRangeOrder(Study):
                 histo, bin_edges = np.histogram(self.data['wc_final'][:, i, j], bins=40, density=True)
                 plt.bar(bin_edges[:-1], histo, label=pair_str, linewidth=1, edgecolor='navy', width=np.diff(bin_edges))
 
-        plt.vlines(0, 0, 1.1*np.max(histo), color='black', ls='--')
+        plt.vlines(0, 0, np.max(histo), color='black', ls='--')
         plt.xlabel('Warren-Cowley Parameter')
         plt.ylabel('Frequency')
         plt.legend()
@@ -580,10 +580,10 @@ class PointDefect(Study):
     def save_data(self):
         # write out pristine and defective energies
         with open(self.dir/'energies.out', 'w') as e:
-            e.write(f'Timesteps: {np.array2string(self.data['timesteps'])}\n\n')
+            e.write(f"Timesteps: {np.array2string(self.data['timesteps'])}\n\n")
 
             for mem_i in range(self.input_yml['members']):
-                e.write(f'{mem_i:<5}  {self.data['e_pris'][mem_i]:<15.4f}  {np.array2string(self.data['e_def'][mem_i])}\n')
+                e.write(f"{mem_i:<5}  {self.data['e_pris'][mem_i]:<15.4f}  {np.array2string(self.data['e_def'][mem_i])}\n")
 
         # compute and plot insertion energy histogram for first and last snapshot
         first_histo, bin_edges = np.histogram(self.data['e_ins'][:, 0], bins=40, density=True)
