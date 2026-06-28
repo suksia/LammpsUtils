@@ -33,10 +33,10 @@ class LmpJob:
             lmp_fp.name]
         
         self.process = subprocess.Popen(self.lammps_cmd, cwd=self.member_dir, stdout=self.outfile, stderr=subprocess.STDOUT)
-        logger.debug(f'Launching LAMMPS for sim={self.member_dir.parent.name} and member={self.member_dir.name}...')
+        logger.debug(f'Launching LAMMPS in dir={self.member_dir.parent.name} for member={self.member_dir.name}...')
 
     def poll(self):
-        poll =self.process.poll()
+        poll = self.process.poll()
         if poll == 0:
             self.finished = True
             self.outfile.close()
@@ -98,6 +98,9 @@ class Study:
                                 self.restart.update({conf_i: {sim_i: [mem_i]}})
                             else:
                                 self.restart[conf_i][sim_i].append(mem_i)
+                
+                # delete restart file so it will be empty for first run_lammps() call
+                Path(input_dir/'LammpsUtils.restart').unlink()              
                 break
 
         if self.dir is None:
@@ -153,9 +156,6 @@ class Study:
         if max_parallel_njobs < 1:
             raise ValueError(f"{NTASKS} processors available. Not enough for a single job ({self.input_yml['processors']})")
         
-        # replace restart file with a copy that can be updated
-        restart_file = open(self.dir / 'LammpsUtils.restart', 'w')
-
         # launch jobs until all have been counted
         while check_status(2) < tot_num_jobs:
             num_running, num_left = check_status(1), check_status(0)
@@ -166,7 +166,10 @@ class Study:
                 job.poll()
                 if job.finished and not job.counted:
                     self.state[sim_i][mem_i]['status'] = 2
-                    restart_file.write(f'{sim_i}\t{mem_i}\n')
+
+                    with open(self.dir / 'LammpsUtils.restart', 'a') as f:
+                        f.write(f'{sim_i}\t{mem_i}\n')
+
                     logger.debug(f'LAMMPS finished for sim={sim_i} and member={mem_i}')
 
             # launch a job if possible
@@ -177,7 +180,10 @@ class Study:
                     if sim_i in self.restart.keys():
                         if mem_i in self.restart[sim_i]:
                             self.state[sim_i][mem_i]['status'] = 2
-                            restart_file.write(f'{sim_i}\t{mem_i}\n')
+
+                            with open(self.dir / 'LammpsUtils.restart', 'a') as f:
+                                f.write(f'{sim_i}\t{mem_i}\n')
+
                             logger.debug(f'LAMMPS has already been run for sim={sim_i} and member={mem_i}. Skipping it')
                             continue
 
@@ -190,8 +196,6 @@ class Study:
                 # run LAMMPS and save process
                 jobs[sim_i][mem_i] = LmpJob(job_dir/lmp_fn, self.params['processors'])
                 self.state[sim_i][mem_i]['status'] = 1
-        
-        restart_file.close()
 
     def analyze(self):
         """Analyze data from out, log, and dump files specific to the study."""
@@ -532,10 +536,10 @@ class PointDefect(Study):
         e_ins = np.zeros((self.params['members'], self.params['num_snapshots']))
 
         for mem_i in range(self.params['members']):
-            energies_log = LmpLog(self.state['runs'][mem_i]['dir']/'energies.log')
+            energies_log = LmpLog(self.state['defective'][mem_i]['dir']/'energies.log')
 
-            e_pris[mem_i] = energies_log.data_df['pe'][0]
-            e_def[mem_i, :] = energies_log.data_df['pe'][1:].to_numpy()
+            e_pris[mem_i] = energies_log.data_df['PotEng'][0]
+            e_def[mem_i, :] = energies_log.data_df['PotEng'][1:].to_numpy()
 
             e_ins[mem_i, :] = e_def[mem_i, :] - e_pris[mem_i]
 
