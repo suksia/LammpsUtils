@@ -386,7 +386,8 @@ class ShortRangeOrder(Study):
         with open(self.dir/'wc.out', 'w') as f:
             for i, t in enumerate(self.data['wc_timesteps']):
                 f.write(str(t)+'\n')
-                f.write(np.array2string(self.data['wc'][i, :, :])+'\n\n')
+                f.write(np.array2string(self.data['wc'][i, :, :])+'\n')
+                f.write(np.array2string(self.data['wc_std'][i, :, :])+'\n\n')
 
         # bin final configuration WC parameters and plot the histogram
         for i in range(len(self.params['species']))[:-1]:
@@ -547,7 +548,7 @@ class PointDefect(Study):
 
         self.data['e_pris'] = e_pris
         self.data['e_def'] = e_def
-        self.data['e_ins'] = e_pris
+        self.data['e_ins'] = e_ins
 
         # obtain positions of defective cells
         for mem_i in range(self.input_yml['members']):
@@ -568,8 +569,8 @@ class PointDefect(Study):
 
                 # add a data attribute for the current frame which is the vacancy position
                 data.attributes['DefectCount'] = np.sum(selection)
-                data.attributes['DefectPosition']  = [data.particles.positions[selected_idx] for selected_idx in np.nonzero(selection)]
-                data.attributes['Occupancy'] = [data.particles['Occupancy'][selected_idx] for selected_idx in np.nonzero(selection)]
+                data.attributes['DefectPosition']  = data.particles.positions[np.nonzero(selection)]
+                data.attributes['Occupancy'] = data.particles['Occupancy'][np.nonzero(selection)]
 
             # write vacancy positions
             pipeline.modifiers.append(modify)
