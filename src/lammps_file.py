@@ -81,11 +81,15 @@ class LmpStructure(LmpFile):
             self.create_lattice(lattice_params)
             
     def create_lattice(self, params):
-        """Constructs a random disordered cubic alloy."""
+        """Constructs a cubic alloy configuration with some given order."""
+        
+        # ------- initialization -------- #
+        
         # read in parameters
         self.lattice = params['lattice']
         self.lattice_const = params['lattice_const']
         self.size = params['size']
+        self.order = params['order']
 
         self.box = {
             'xlo': 0.0,
@@ -118,7 +122,9 @@ class LmpStructure(LmpFile):
         for i, el in enumerate(self.composition.keys()):
             i += 1
             self.species_to_type.update({el: i})
-        
+
+        # ------- undecorated lattice sites ------- #
+
         # enumerate all translation vectors
         transv = []
         for i in range(self.size[0]):
@@ -149,10 +155,12 @@ class LmpStructure(LmpFile):
                 if p[0] == op[0] and p[1] == op[1] and p[2] == op[2]:
                     append = False
             if append:
-                upos.append(self.lattice_const*p)
+                upos.append(p)
 
         self.positions = np.array(upos, dtype=np.float32)
         self.num_atoms = len(self.positions)
+
+        # ------- decoration ------- #
 
         # initialize ids and types arrays
         self.types = np.zeros(self.num_atoms, dtype=np.int8)
@@ -162,7 +170,6 @@ class LmpStructure(LmpFile):
         for el, conc in self.composition.items():
             at_composition.update({el: round(self.num_atoms*conc/100)})
 
-        # select random elements and add or remove single atoms until the total is correct
         random.seed()
         while sum(at_composition.values()) != self.num_atoms:
             rand_el_idx = random.randint(0, len(self.composition)-1)
@@ -177,12 +184,46 @@ class LmpStructure(LmpFile):
             rand_pos_idx.update({random.randint(0, self.num_atoms-1): None})
         rand_pos_idx = list(rand_pos_idx)
 
-        # assign elements to random positions by setting the types
-        i = 0
-        for el, n_at in at_composition.items():
-            for j in range(n_at):
-                self.types[rand_pos_idx[i]] = self.species_to_type[el]
-                i += 1
+        # random -> randomly decorate sites with different types
+        if params['order'] == 'random':
+            i = 0
+            for el, n_at in at_composition.items():
+                for j in range(n_at):
+                    self.types[rand_pos_idx[i]] = self.species_to_type[el]
+                    i += 1
+
+        else:
+            if len(self.composition) != 2 and self.lattice != 'bcc':
+                raise NotImplementedError('Ordered/separated phases have only been implemented for binary bcc alloys.')
+            
+            # define solute and solvent
+            solute_sp = min(self.composition, key=self.composition.get)
+            solute_type = self.species_to_type[solute_sp]
+
+            solvent_sp = deepcopy(self.composition)
+            solvent_sp.pop(solute_sp)
+            solvent_sp = list(solvent_sp.keys())[0]
+            solvent_type = self.species_to_type[solvent_sp]
+
+            # B2 -> checkerboard pattern (interpenetrating sc sublattices)
+            if params['order'] == 'B2':
+                for i in rand_pos_idx:
+                    pos = self.positions[i]
+                    if any(pos % 1):
+                        self.types[i] = solute_type
+
+            # separated -> sphere of solute in middle (precipitate)
+            elif params['order'] == 'separated':
+                center = np.array([self.size[0], self.size[1], self.size[2]])/2
+                pos_tree = cKDTree(self.positions)
+                _, solute_pos_idcs = pos_tree.query(center, self.at_composition[solute_sp])
+
+                for i in solute_pos_idcs:
+                    self.types[i] = solute_type
+
+            self.types = np.where(self.types==0, solvent_type, solute_type)
+
+        self.positions = self.lattice_const*self.positions
 
     def load_from_file(self, read_path):
         super().load_from_file(read_path)

@@ -48,10 +48,11 @@ reset_timestep 0
 
 fix mc all atom/swap ?mc_freq? ?mc_attempts? ?mc_seed? ?temp? types 1 2
 
+variable PV equal press*vol*6.241509e-7
 variable acc_ratio equal "ternary(f_mc[1] > 0, f_mc[2]/f_mc[1], 0.0)"
 
 log mc.log
-thermo_style custom step etotal press enthalpy v_acc_ratio
+thermo_style custom step pe ke v_PV enthalpy v_acc_ratio
 thermo ?mc_freq?
 
 dump 1 all custom ?snapshot? mc.dump id type x y z

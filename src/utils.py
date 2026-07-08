@@ -88,7 +88,7 @@ def random_range(start, stop, step=1, seed=None):
     values = np.arange(start, stop, step)
     return rng.permutation(values).tolist()
 
-def warren_cowley(num_neighbors: int, positions: np.ndarray, types: np.ndarray, boxlo:np.ndarray, boxsize: np.ndarray):
+def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.ndarray, types: np.ndarray, boxlo:np.ndarray, boxsize: np.ndarray):
     """Compute the Warren-Cowley parameters of a configuration given the simulation box size, atomic positions, and types."""
     # list like [1, 2, 1, 1] -> list like [1, 2]
     unique_types = sorted(list(set(types))) 
@@ -105,9 +105,10 @@ def warren_cowley(num_neighbors: int, positions: np.ndarray, types: np.ndarray, 
     # k-d trees have O(log n) speed
     position_tree = cKDTree(positions, boxsize=boxsize)
 
-    # square matrix where rows are reference atoms types and columns are number of neighbors of each type
-    neighbors = np.zeros((num_unique_types, num_unique_types))
-    wc = np.zeros((num_unique_types, num_unique_types))
+    # vector of square matrices (each is a shell) where rows are reference atoms types and columns are number of neighbors of each type
+    num_shells = len(shell_radii)-1
+    neighbors = np.zeros((num_shells, num_unique_types, num_unique_types))
+    wc = np.zeros((num_shells, num_unique_types, num_unique_types))
 
     # compute composition using types array
     composition = {int(t): np.sum(np.where(types==t, 0, 1))/len(types) for t in unique_types}
@@ -116,14 +117,23 @@ def warren_cowley(num_neighbors: int, positions: np.ndarray, types: np.ndarray, 
     for pos in positions:
         neigh_dist, neigh_idcs = position_tree.query(pos, k=num_neighbors+1)
 
+        # get central atom type and remove it from lists
         ref_type = types[neigh_idcs[0]]
-        for ni in neigh_idcs[1:]:
-            neigh_type = types[ni]
-            neighbors[ref_type-1, neigh_type-1] += 1
+        neigh_dist, neigh_idcs = neigh_dist[1:],  neigh_idcs[1:]
+
+        for shi in range(num_shells):
+            # atom position indices within shell
+            shell_mask = (neigh_dist > shell_radii[shi]) & (neigh_dist < shell_radii[shi+1])
+            shell_idcs = neigh_idcs[shell_mask]
+            
+            for ni in shell_idcs:
+                neigh_type = types[ni]
+                neighbors[shi, ref_type-1, neigh_type-1] += 1
 
     # compute all possible paramaters as an NxN matrix where N is the number types following the same convention as neighbors matrices
-    for to in unique_types:
-        for ti in unique_types:
-            wc[to-1, ti-1] = 1 - (neighbors[to-1, ti-1] / np.sum(neighbors[to-1, :])) / composition[to]
+    for shi in range(num_shells): 
+        for to in unique_types:
+            for ti in unique_types:
+                wc[shi, to-1, ti-1] = 1 - (neighbors[shi, to-1, ti-1] / np.sum(neighbors[shi, to-1, :])) / composition[to]
 
     return wc

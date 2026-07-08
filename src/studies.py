@@ -212,7 +212,7 @@ def register_study(cls):
     return cls
 
 @register_study
-class ShortRangeOrder(Study):
+class MCMD(Study):
     def init_state(self):
         self.sim_ids = ['runs']
         self.state.update({'runs': {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}})
@@ -232,19 +232,19 @@ class ShortRangeOrder(Study):
             'maxiter': unprefix(self.input_yml['minimize'][2]),
             'maxeval': unprefix(self.input_yml['minimize'][3])
         })
+        
+        # neighbors up to 5th shell (cutoffs are half-way between ideal shell radii)
+        if self.params['lattice'] == 'bcc':
+            self.params['wc_num_neighbors'] = [8, 6, 12, 24, 8]
+            self.params['wc_shell_cutoff'] = [r*self.params['lattice_const'] for r in [0, 0.933, 1.207, 1.536, 1.695, 1.866]]
+        else:
+            raise ValueError(f"Lattice type {self.params['lattice']} is either unrecognized or unsupported")
 
         if 'wc_shell' not in self.input_yml.keys():
-            self.params['wc_shell'] = 1
-        
-        if self.params['lattice'] == 'bcc':
-            if self.params['wc_shell'] == 1:
-                self.params['wc_num_neighbors'] = 8
+            self.params['wc_shell'] = 3
 
-            elif self.params['wc_shell'] == 2:
-                self.params['wc_num_neighbors'] = 14
-
-            elif self.params['wc_shell'] == 3:
-                self.params['wc_num_neighbors'] = 26
+        if 'order' not in self.input_yml.keys():
+            self.params['order'] = 'random'
 
         # define seeds for atom/swap RNG 
         mc_seeds = create_seeds(self.params['members'])
@@ -293,17 +293,32 @@ class ShortRangeOrder(Study):
             dump.write_structure_file(new_struct_write_path, new_struct_params)
 
     def analyze(self):
-        # compute average enthalpy and acceptance ratio from mc.log files
-        enthalpy = np.zeros((self.params['members'], int(self.params['mc']/self.params['mc_freq'])+1))
-        acc_ratio = np.zeros((self.params['members'], int(self.params['mc']/self.params['mc_freq'])+1))
+        # compute average of thermodynamic parameters and acceptance ratio from mc.log files
+        pot_e = np.zeros((self.params['members'], int(self.params['mc']/self.params['mc_freq'])+1))
+        kin_e = pot_e.copy(pot_e)
+        pv = pot_e.copy(pot_e)
+        enthalpy = pot_e.copy(pot_e)
+        acc_ratio = pot_e.copy(pot_e)
 
         for mem_i in range(self.params['members']):
             mc_log = LmpLog(self.state['runs'][mem_i]['dir']/'mc.log')
 
+            pot_e = mc_log.data_df['PotEng'].to_numpy()
+            kin_e = mc_log.data_df['KinEng'].to_numpy()
+            pv = mc_log.data_df['v_PV'].to_numpy()
             enthalpy[mem_i, :] = mc_log.data_df['Enthalpy'].to_numpy()
             acc_ratio[mem_i, :] = mc_log.data_df['v_acc_ratio'].to_numpy()
 
         self.data['timesteps'] = mc_log.data_df.index.to_numpy()
+
+        self.data['pot_e'] = np.mean(pot_e, axis=0)
+        self.data['pot_e_std'] = np.std(pot_e, axis=0)
+
+        self.data['kin_e'] = np.mean(kin_e, axis=0)
+        self.data['kin_e_std'] = np.std(kin_e, axis=0)
+
+        self.data['pv'] = np.mean(pv, axis=0)
+        self.data['pv_std'] = np.std(pv, axis=0)
 
         self.data['enthalpy'] = np.mean(enthalpy, axis=0)
         self.data['enthalpy_std'] = np.std(enthalpy, axis=0)
@@ -313,17 +328,18 @@ class ShortRangeOrder(Study):
 
         # compute Warren-Cowley parameters for all timesteps and final configurations to be averaged later
 
-        # dim0 = members, dim1 = timesteps, dim2 = central atom, dim3 = neighbor
-        wc = np.zeros((self.params['members'], int(self.params['mc']/self.params['snapshot'])+1, len(self.params['species']), len(self.params['species'])))
-        wc_final = np.zeros((self.params['members'], len(self.params['species']), len(self.params['species'])))
+        # axis0 = members, axis1 = timesteps, axis2 = shell, axis3 = central atom, axis4 = neighbor
+        wc = np.zeros((self.params['members'], int(self.params['mc']/self.params['snapshot'])+1, self.params['wc_shell'], len(self.params['species']), len(self.params['species'])))
+        wc_final = np.zeros((self.params['members'], self.params['wc_shell'], len(self.params['species']), len(self.params['species'])))
 
         for mem_i in range(self.params['members']):
             mc_dump = LmpDump(file_path=self.state['runs'][mem_i]['dir']/'mc.dump')
 
             # WC evolution over time for each member
-            for i, snapshot in enumerate(mc_dump.frames.values()):
-                wc[mem_i, i, :, :] = warren_cowley(
-                    self.params['wc_num_neighbors'], 
+            for snap_i, snapshot in enumerate(mc_dump.frames.values()):
+                wc[mem_i, snap_i, :, :, :] = warren_cowley(
+                    sum(self.params['wc_num_neighbors'][:self.params['wc_shell']]),
+                    self.params['wc_shell_cutoff'][:self.params['wc_shell']+1],
                     snapshot['position'], 
                     snapshot['type'], 
                     np.array([snapshot['box']['xlo'], snapshot['box']['ylo'], snapshot['box']['zlo']]),
@@ -331,8 +347,9 @@ class ShortRangeOrder(Study):
             
             # WC for final frame for each member
             final_frame = list(LmpDump(file_path=self.state['runs'][mem_i]['dir']/'final.dump').frames.values())[0]
-            wc_final[mem_i, :, :] = warren_cowley(
-                self.params['wc_num_neighbors'], 
+            wc_final[mem_i, :, :, :] = warren_cowley(
+                sum(self.params['wc_num_neighbors'][:self.params['wc_shell']]),
+                self.params['wc_shell_cutoff'][:self.params['wc_shell']+1],
                 final_frame['position'], 
                 final_frame['type'], 
                 np.array([final_frame['box']['xlo'], final_frame['box']['ylo'], final_frame['box']['zlo']]),
@@ -344,7 +361,9 @@ class ShortRangeOrder(Study):
         self.data['wc_final'] = wc_final
 
     def save_data(self):
-        # plot enthalpy
+        # ------- thermodynamic parameters ------- #
+
+        # plot enthalpy with error bars
         plt.plot(self.data['timesteps'], self.data['enthalpy'], '--o', ms=2)
         plt.fill_between(self.data['timesteps'], self.data['enthalpy']-self.data['enthalpy_std'], self.data['enthalpy']+self.data['enthalpy_std'], alpha=0.5)
         plt.xlabel('Timestep')
@@ -352,10 +371,30 @@ class ShortRangeOrder(Study):
         plt.savefig(self.dir/'enthalpy.png', bbox_inches="tight")
         plt.close()
 
-        # write out enthalpy data
-        with open(self.dir/'enthalpy.out', 'w') as e:
+        # plot PE, KE, PV, H
+        plt.plot(self.data['timesteps'], self.data['pot_e'], label='$U$')
+        plt.plot(self.data['timesteps'], self.data['kin_e'], label='$K$')
+        plt.plot(self.data['timesteps'], self.data['pv'], label='$PV$')
+        plt.plot(self.data['timesteps'], self.data['enthalpy'], label='$H$')
+        plt.xlabel('Timestep')
+        plt.ylabel('Energy [eV]')
+        plt.savefig(self.dir/'thermo.png', bbox_inches="tight")
+        plt.close()
+
+        # write out thermodynamic data
+        with open(self.dir/'thermo.out', 'w') as e:
+            e.write(f"{'Step':<10} {'U':<20} {'U_std':<10} {'K':<20} {'K_std':<10} {'PV':<20} {'PV_std':<10} {'H':<20} {'H_std':<10}")
             for i in range(len(self.data['timesteps'])):
-                e.write(f"{self.data['timesteps'][i]:<10} {self.data['enthalpy'][i]:<15.3f} {self.data['enthalpy_std'][i]:<5.3f}\n")
+                e.write(f" \
+                        {self.data['timesteps'][i]:<10} \
+                        {self.data['pot_e'][i]:<15.5f} \
+                        {self.data['pot_e_std'][i]:<5.5f} \
+                        {self.data['kin_e'][i]:<15.5f} \
+                        {self.data['kin_e_std'][i]:<5.5f} \
+                        {self.data['PV'][i]:<15.5f} \
+                        {self.data['PV_std'][i]:<5.5f} \
+                        {self.data['enthalpy'][i]:<15.5f} \
+                        {self.data['enthalpy_std'][i]:<5.5f}\n")
 
         # plot acceptance ratio
         plt.plot(self.data['timesteps'], self.data['acc_ratio'], '--o', ms=2)
@@ -366,55 +405,78 @@ class ShortRangeOrder(Study):
         plt.savefig(self.dir/'acc_ratio.png', bbox_inches="tight")
         plt.close()
 
-        # plot WC evolution data averaged across members
+        # ------- Warren-Cowley parameters ------- #
+        
+        wc_dir = self.dir / 'wc_data'
+        wc_dir.mkdir(exist_ok=True)
+
+        # plot WC evolution data averaged across members with std for each shell separately
+        for shi in range(self.params['wc_shell']):
+            for i in range(len(self.params['species']))[:-1]:
+                for j in range(len(self.params['species']))[i+1:]:
+                    pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
+                    x, y = self.data['wc_timesteps'], self.data['wc'][:, shi, i, j]
+                    yerr = (y - self.data['wc_std'][:, i, j], y + self.data['wc_std'][:, shi, i, j])
+                    plt.plot(x, y, '--o', ms=2, label=pair_str)
+                    plt.fill_between(x, yerr[0], yerr[1], alpha=0.5)
+            
+            plt.axhline(0, color='black', ls='--')
+            plt.xlabel('Timestep')
+            plt.ylabel('Warren-Cowley Parameter')
+            plt.legend()
+            plt.savefig(wc_dir/f'wc_shell_{shi}.png', bbox_inches="tight" )
+            plt.close()
+
+            # write WC evolution data
+            with open(wc_dir/f'wc_shell_{shi}.out', 'w') as f:
+                f.write(f'Shell = {shi}\n\n')
+                for i, t in enumerate(self.data['wc_timesteps']):
+                    f.write(str(t)+'\n')
+                    f.write(np.array2string(self.data['wc'][i, shi, :, :])+'\n')
+                    f.write(np.array2string(self.data['wc_std'][i, shi, :, :])+'\n\n')
+
+        # plot WC evolution for each shell together without std
         for i in range(len(self.params['species']))[:-1]:
             for j in range(len(self.params['species']))[i+1:]:
-                pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
-                x, y = self.data['wc_timesteps'], self.data['wc'][:, i, j]
-                yerr = (y - self.data['wc_std'][:, i, j], y + self.data['wc_std'][:, i, j])
-                plt.plot(x, y, '--o', ms=2, label=pair_str)
-                plt.fill_between(x, yerr[0], yerr[1], alpha=0.5)
-        
-        plt.hlines(0, self.data['wc_timesteps'][0], self.data['wc_timesteps'][-1], color='black', ls='--')
-        plt.xlabel('Timestep')
-        plt.ylabel('Warren-Cowley Parameter')
-        plt.legend()
-        plt.savefig(self.dir/'wc.png', bbox_inches="tight" )
-        plt.close()
+                for shi in range(self.params['wc_shell']):
+                    pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
+                    x, y = self.data['wc_timesteps'], self.data['wc'][:, shi, i, j]
+                    plt.plot(x, y, label=f'Shell {shi}')
 
-        # write WC evolution data
-        with open(self.dir/'wc.out', 'w') as f:
-            for i, t in enumerate(self.data['wc_timesteps']):
-                f.write(str(t)+'\n')
-                f.write(np.array2string(self.data['wc'][i, :, :])+'\n')
-                f.write(np.array2string(self.data['wc_std'][i, :, :])+'\n\n')
+                plt.axhline(0, color='black', ls='--')
+                plt.xlabel('Timestep')
+                plt.ylabel('Warren-Cowley Parameter')
+                plt.legend()
+                plt.savefig(wc_dir/f'wc_{pair_str}.png', bbox_inches="tight" )
+                plt.close()
 
         # bin final configuration WC parameters and plot the histogram
-        for i in range(len(self.params['species']))[:-1]:
-            for j in range(len(self.params['species']))[i+1:]:
-                pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
-                histo, bin_edges = np.histogram(self.data['wc_final'][:, i, j], bins=40, density=True)
-                plt.bar(bin_edges[:-1], histo, label=pair_str, linewidth=1, edgecolor='navy', width=np.diff(bin_edges))
+        for shi in range(self.params['wc_shell']):
+            for i in range(len(self.params['species']))[:-1]:
+                for j in range(len(self.params['species']))[i+1:]:
+                    pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
+                    histo, bin_edges = np.histogram(self.data['wc_final'][:, shi, i, j], bins=40, density=True)
+                    plt.bar(bin_edges[:-1], histo, label=pair_str, linewidth=1, edgecolor='navy', width=np.diff(bin_edges))
 
-        plt.vlines(0, 0, np.max(histo), color='black', ls='--')
-        plt.xlabel('Warren-Cowley Parameter')
-        plt.ylabel('Frequency')
-        plt.legend()
-        plt.savefig(self.dir/'wc_final.png', bbox_inches="tight" )
-        plt.close()
+            plt.vlines(0, 0, np.max(histo), color='black', ls='--')
+            plt.xlabel('Warren-Cowley Parameter')
+            plt.ylabel('Frequency')
+            plt.legend()
+            plt.savefig(wc_dir/f'wc_final_shell_{shi}.png', bbox_inches="tight" )
+            plt.close()
 
-        # write final configuration WC data
-        with open(self.dir/'wc_final.out', 'w') as f:
-            for mem_i in range(self.params['members']):
-                f.write(str(mem_i)+'\n')
-                f.write(np.array2string(self.data['wc_final'][mem_i, :, :])+'\n\n')
-        
-            # compute average
-            f.write('Average\n')
-            f.write(np.array2string(np.average(self.data['wc_final'], axis=0)))
+            # write final configuration WC data
+            with open(self.dir/f'wc_final_shell_{shi}.out', 'w') as f:
+                for mem_i in range(self.params['members']):
+                    f.write(str(mem_i)+'\n')
+                    f.write(np.array2string(self.data['wc_final'][mem_i, shi, :, :])+'\n\n')
+            
+                # compute average
+                f.write('Average\n')
+                f.write(np.array2string(np.mean(self.data['wc_final'], axis=0)))
 
 @register_study
-class PointDefect(Study):
+class PointDefectSRO(Study):
     def init_state(self):
         # setup containers
         self.sim_ids = ['pristine', 'defective']
@@ -584,10 +646,10 @@ class PointDefect(Study):
     def save_data(self):
         # write out pristine and defective energies
         with open(self.dir/'energies.out', 'w') as e:
-            e.write(f"Timesteps: {np.array2string(self.data['timesteps'])}\n\n")
+            e.write(f"Timesteps: {np.array2string(self.data['timesteps'], max_line_width=1000)}\n\n")
 
             for mem_i in range(self.input_yml['members']):
-                e.write(f"{mem_i:<5}  {self.data['e_pris'][mem_i]:<15.4f}  {np.array2string(self.data['e_def'][mem_i])}\n")
+                e.write(f"{mem_i:<5}  {self.data['e_pris'][mem_i]:<15.4f}  {np.array2string(self.data['e_def'][mem_i], max_line_width=1000)}\n")
 
         # compute and plot insertion energy histogram for first and last snapshot
         first_histo, bin_edges = np.histogram(self.data['e_ins'][:, 0], bins=40, density=True)
