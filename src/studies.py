@@ -367,10 +367,10 @@ class MCMD(Study):
 
         # determine scale of y-axis
         largest_dE = max(
-            abs(max(self.data['pot_e']+self.data['pot_e_std']) - min(self.data['pot_e']-self.data['pot_e_std'])),
-            abs(max(self.data['kin_e']+self.data['kin_e_std']) - min(self.data['kin_e']-self.data['kin_e_std'])),
-            abs(max(self.data['pv']+self.data['pv_std']) - min(self.data['pv']-self.data['pv_std'])),
-            abs(max(self.data['enthalpy']+self.data['enthalpy_std']) - min(self.data['enthalpy']-self.data['enthalpy_std'])))
+            abs((max(self.data['pot_e'])    + max(self.data['pot_e_std']))    - (min(self.data['pot_e'])    - min(self.data['pot_e_std']   ))),
+            abs((max(self.data['kin_e'])    + max(self.data['kin_e_std']))    - (min(self.data['kin_e'])    - min(self.data['kin_e_std']   ))),
+            abs((max(self.data['pv'])       + max(self.data['pv_std']))       - (min(self.data['pv'])       - min(self.data['pv_std']      ))),
+            abs((max(self.data['enthalpy']) + max(self.data['enthalpy_std'])) - (min(self.data['enthalpy']) - min(self.data['enthalpy_std']))))
 
         middles = [
             0,
