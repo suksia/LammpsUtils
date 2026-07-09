@@ -366,7 +366,7 @@ class MCMD(Study):
         # ------- thermodynamic parameters ------- #
 
         # determine scale of y-axis
-        largest_dE = max(
+        largest_dE = 1.25*max(
             abs((max(self.data['pot_e']    + self.data['pot_e_std']))    - (min(self.data['pot_e']    - self.data['pot_e_std']   ))),
             abs((max(self.data['kin_e']    + self.data['kin_e_std']))    - (min(self.data['kin_e']    - self.data['kin_e_std']   ))),
             abs((max(self.data['pv']       + self.data['pv_std']))       - (min(self.data['pv']       - self.data['pv_std']      ))),
