@@ -372,12 +372,12 @@ class MCMD(Study):
             abs(max(self.data['pv']+self.data['pv_std']) - min(self.data['pv']-self.data['pv_std'])),
             abs(max(self.data['enthalpy']+self.data['enthalpy_std']) - min(self.data['enthalpy']-self.data['enthalpy_std'])))
 
-        medians = [
+        middles = [
             0,
-            np.median(self.data['pot_e']),
-            np.median(self.data['kin_e']),
-            np.median(self.data['pv']),
-            np.median(self.data['enthalpy'])]
+            (np.min(self.data['pot_e']) + np.max(self.data['pot_e'])) / 2,
+            (np.min(self.data['kin_e']) + np.max(self.data['kin_e'])) / 2,
+            (np.min(self.data['pv']) + np.max(self.data['pv'])) / 2,
+            (np.min(self.data['enthalpy']) + np.max(self.data['enthalpy'])) / 2]
 
         fig, axs = plt.subplots(5, 1, figsize=(10, 15), sharex=True)
         fig: plt.Figure = fig
@@ -392,25 +392,25 @@ class MCMD(Study):
 
         axs[1].plot(self.data['timesteps'], self.data['pot_e'], '--o', ms=2, label='PE', color=colors[0])
         axs[1].fill_between(self.data['timesteps'], self.data['pot_e']-self.data['pot_e_std'], self.data['pot_e']+self.data['pot_e_std'], alpha=0.5, color=colors[0])
-        axs[1].set_ylim([medians[1] - largest_dE/2, medians[1] + largest_dE/2])
+        axs[1].set_ylim([middles[1] - largest_dE/2, middles[1] + largest_dE/2])
         axs[1].set_ylabel('Energy [eV]')
         axs[1].set_title('Potential Energy')
 
         axs[2].plot(self.data['timesteps'], self.data['kin_e'], '--o', ms=2, label='KE', color=colors[1])
         axs[2].fill_between(self.data['timesteps'], self.data['kin_e']-self.data['kin_e_std'], self.data['kin_e']+self.data['kin_e_std'], alpha=0.5, color=colors[1])
-        axs[2].set_ylim([medians[2] - largest_dE/2, medians[2] + largest_dE/2])
+        axs[2].set_ylim([middles[2] - largest_dE/2, middles[2] + largest_dE/2])
         axs[2].set_ylabel('Energy [eV]')
         axs[2].set_title('Kinetic Energy')
 
         axs[3].plot(self.data['timesteps'], self.data['pv'], '--o', ms=2, label='PV Work', color=colors[2])
         axs[3].fill_between(self.data['timesteps'], self.data['pv']-self.data['pv_std'], self.data['pv']+self.data['pv_std'], alpha=0.5, color=colors[2])
-        axs[3].set_ylim([medians[3] - largest_dE/2, medians[3] + largest_dE/2])
+        axs[3].set_ylim([middles[3] - largest_dE/2, middles[3] + largest_dE/2])
         axs[3].set_ylabel('Energy [eV]')
         axs[3].set_title('PV Work')
 
         axs[4].plot(self.data['timesteps'], self.data['enthalpy'], '--o', ms=2, label='Enthalpy', color=colors[3])
         axs[4].fill_between(self.data['timesteps'], self.data['enthalpy']-self.data['enthalpy_std'], self.data['enthalpy']+self.data['enthalpy_std'], alpha=0.5, color=colors[3])
-        axs[4].set_ylim([medians[4] - largest_dE/2, medians[4] + largest_dE/2])
+        axs[4].set_ylim([middles[4] - largest_dE/2, middles[4] + largest_dE/2])
         axs[4].set_ylabel('Energy [eV]')
         axs[4].set_title('Enthalpy')
 
@@ -429,7 +429,7 @@ class MCMD(Study):
         # ------- Warren-Cowley parameters ------- #
 
         # WC evolution during simulation
-        fig, axs = plt.subplots(self.params['wc_shell']+1, 1, figsize=((self.params['wc_shell']+1)*2, 15), sharex=True)
+        fig, axs = plt.subplots(self.params['wc_shell']+1, 1, figsize=((self.params['wc_shell']+1)*2, 18), sharex=True)
         fig: plt.Figure = fig
         axs: list[plt.Axes] = axs
 
