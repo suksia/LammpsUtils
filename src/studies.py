@@ -365,7 +365,20 @@ class MCMD(Study):
 
         # ------- thermodynamic parameters ------- #
 
-        fig, axs = plt.subplots(5, 1, figsize=(17, 13), sharex=True)
+        # determine scale of y-axis
+        largest_dE = max(
+            abs(max(self.data['pot_e']) - min(self.data['pot_e'])),
+            abs(max(self.data['kin_e']) - min(self.data['kin_e'])),
+            abs(max(self.data['pv']) - min(self.data['pv'])),
+            abs(max(self.data['enthalpy']) - min(self.data['enthalpy'])))
+
+        means = [
+            np.mean(self.data['pot_e']),
+            np.mean(self.data['kin_e']),
+            np.mean(self.data['pv']),
+            np.mean(self.data['enthalpy'])]
+
+        fig, axs = plt.subplots(5, 1, figsize=(10, 15), sharex=True)
         fig: plt.Figure = fig
         axs: list[plt.Axes] = axs
 
@@ -373,41 +386,49 @@ class MCMD(Study):
         axs[0].plot(self.data['timesteps'], self.data['acc_ratio'], '--o', ms=2, color='black')
         axs[0].fill_between(self.data['timesteps'], self.data['acc_ratio']-self.data['acc_ratio_std'], self.data['acc_ratio']+self.data['acc_ratio_std'], alpha=0.5, color='black')
         axs[0].set_ylim([0, 1])
-        axs[0].set_ylabel('Metropolis Acceptance Ratio')
+        axs[0].set_ylabel('Acceptance Ratio')
+        axs[0].set_title('Metropolis Acceptance Ratio')
 
         axs[1].plot(self.data['timesteps'], self.data['pot_e'], '--o', ms=2, label='PE', color=colors[0])
         axs[1].fill_between(self.data['timesteps'], self.data['pot_e']-self.data['pot_e_std'], self.data['pot_e']+self.data['pot_e_std'], alpha=0.5, color=colors[0])
-        axs[1].set_ylabel('Potential Energy [eV]')
-        axs[1].legend()
+        axs[1].set_ylim([means[1] - largest_dE/2, means[1] + largest_dE/2])
+        axs[1].set_ylabel('Energy [eV]')
+        axs[1].set_title('Potential Energy')
 
-        axs[1].plot(self.data['timesteps'], self.data['kin_e'], '--o', ms=2, label='KE', color=colors[1])
-        axs[1].fill_between(self.data['timesteps'], self.data['kin_e']-self.data['kin_e_std'], self.data['kin_e']+self.data['kin_e_std'], alpha=0.5, color=colors[1])
-        axs[1].set_ylabel('Kinetic Energy [eV]')
+        axs[2].plot(self.data['timesteps'], self.data['kin_e'], '--o', ms=2, label='KE', color=colors[1])
+        axs[2].fill_between(self.data['timesteps'], self.data['kin_e']-self.data['kin_e_std'], self.data['kin_e']+self.data['kin_e_std'], alpha=0.5, color=colors[1])
+        axs[2].set_ylim([means[2] - largest_dE/2, means[2] + largest_dE/2])
+        axs[2].set_ylabel('Energy [eV]')
+        axs[2].set_title('Kinetic Energy')
 
-        axs[2].plot(self.data['timesteps'], self.data['pv'], '--o', ms=2, label='PV Work', color=colors[2])
-        axs[2].fill_between(self.data['timesteps'], self.data['pv']-self.data['pv_std'], self.data['pv']+self.data['pv_std'], alpha=0.5, color=colors[2])
-        axs[2].set_ylabel('PV Work [eV]')
+        axs[3].plot(self.data['timesteps'], self.data['pv'], '--o', ms=2, label='PV Work', color=colors[2])
+        axs[3].fill_between(self.data['timesteps'], self.data['pv']-self.data['pv_std'], self.data['pv']+self.data['pv_std'], alpha=0.5, color=colors[2])
+        axs[3].set_ylim([means[3] - largest_dE/2, means[3] + largest_dE/2])
+        axs[3].set_ylabel('Energy [eV]')
+        axs[3].set_title('PV Work')
 
-        axs[3].plot(self.data['timesteps'], self.data['enthalpy'], '--o', ms=2, label='Enthalpy', color=colors[3])
-        axs[3].fill_between(self.data['timesteps'], self.data['enthalpy']-self.data['enthalpy_std'], self.data['enthalpy']+self.data['enthalpy_std'], alpha=0.5, color=colors[3])
-        axs[3].set_ylabel('Enthalpy [eV]')
+        axs[4].plot(self.data['timesteps'], self.data['enthalpy'], '--o', ms=2, label='Enthalpy', color=colors[3])
+        axs[4].fill_between(self.data['timesteps'], self.data['enthalpy']-self.data['enthalpy_std'], self.data['enthalpy']+self.data['enthalpy_std'], alpha=0.5, color=colors[3])
+        axs[4].set_ylim([means[4] - largest_dE/2, means[4] + largest_dE/2])
+        axs[4].set_ylabel('Energy [eV]')
+        axs[4].set_title('Enthalpy')
 
-        axs[3].set_xlabel('Timestep')
+        axs[4].set_xlabel('Timestep')
         fig.savefig(self.dir/'thermo.png', bbox_inches="tight")
         plt.close()
 
         # write out thermodynamic data
         with open(self.dir/'thermo.out', 'w') as e:
-            e.write(f"{'Step':<10} {'U':<20} {'U_std':<10} {'K':<20} {'K_std':<10} {'PV':<20} {'PV_std':<10} {'H':<20} {'H_std':<10}\n")
+            e.write(f"{'Step':<10} {'U':<20} {'U_std':<20} {'K':<20} {'K_std':<20} {'PV':<20} {'PV_std':<20} {'H':<20} {'H_std':<20}\n")
             for i in range(len(self.data['timesteps'])):
-                e.write(f"{self.data['timesteps'][i]:<10} {self.data['pot_e'][i]:<20.5f} {self.data['pot_e_std'][i]:<10.5f} ")
-                e.write(f"{self.data['kin_e'][i]:<20.5f} {self.data['kin_e_std'][i]:<10.5f} {self.data['pv'][i]:<20.5f} {self.data['pv_std'][i]:<10.5f} ")
-                e.write(f"{self.data['enthalpy'][i]:<20.5f} {self.data['enthalpy_std'][i]:<10.5f}\n")
+                e.write(f"{self.data['timesteps'][i]:<10} {self.data['pot_e'][i]:<20.5f} {self.data['pot_e_std'][i]:<20.5f} ")
+                e.write(f"{self.data['kin_e'][i]:<20.5f} {self.data['kin_e_std'][i]:<20.5f} {self.data['pv'][i]:<20.5f} {self.data['pv_std'][i]:<20.5f} ")
+                e.write(f"{self.data['enthalpy'][i]:<20.5f} {self.data['enthalpy_std'][i]:<20.5f}\n")
 
         # ------- Warren-Cowley parameters ------- #
 
         # WC evolution during simulation
-        fig, axs = plt.subplots(self.params['wc_shell'+1], 1, figsize=(self.params['wc_shell'+1]*4, 13), sharex=True)
+        fig, axs = plt.subplots(self.params['wc_shell']+1, 1, figsize=((self.params['wc_shell']+1)*2, 15), sharex=True)
         fig: plt.Figure = fig
         axs: list[plt.Axes] = axs
 
@@ -449,10 +470,11 @@ class MCMD(Study):
                     f.write(str(t)+'\n')
                     f.write(np.array2string(self.data['wc'][i, shi, :, :])+'\n')
                     f.write(np.array2string(self.data['wc_std'][i, shi, :, :])+'\n\n')
-                f.write('-'*50+'\n\n')
+                if shi != self.params['wc_shell']-1:
+                    f.write('-'*50+'\n\n')
 
         # bin final configuration WC parameters and plot the histogram for each shell
-        fig, axs = plt.subplots(self.params['wc_shell'], 1, figsize=(self.params['wc_shell'+1]*4, 13), sharex=True)
+        fig, axs = plt.subplots(self.params['wc_shell'], 1, figsize=((self.params['wc_shell']+1)*2, 15), sharex=True)
         fig: plt.Figure = fig
         axs: list[plt.Axes] = axs
 
@@ -481,8 +503,9 @@ class MCMD(Study):
                     f.write(np.array2string(self.data['wc_final'][mem_i, shi, :, :])+'\n\n')
                 # compute average
                 f.write('Average\n')
-                f.write(np.array2string(np.mean(self.data['wc_final'], axis=0)[shi])+'\n')
-                f.write('-'*50+'\n\n')
+                f.write(np.array2string(np.mean(self.data['wc_final'], axis=0)[shi]))
+            if shi != self.params['wc_shell']-1:
+                f.write('\n\n'+'-'*50+'\n\n')
 
 @register_study
 class PointDefectSRO(Study):
