@@ -246,18 +246,45 @@ class MCMD(Study):
         if 'order' not in self.input_yml.keys():
             self.params['order'] = 'random'
 
-        # define seeds for atom/swap RNG 
-        mc_seeds = create_seeds(self.params['members'])
+        # define seeds for atom/swap RNG, velocity initialization, and Langevin thermostat (if used)
+        seeds = create_seeds(3*self.params['members'])
+
+        # define ensemble
+        if self.params['ensemble'] == 'langevin':
+            ensemble_fix_fn = 'langevin_fix.in'
+            ensemble_unfix_fn = 'langevin_unfix.in'
+
+        elif self.params['ensemble'] == 'npt':
+            ensemble_fix_fn = 'npt_fix.in'
+            ensemble_unfix_fn = 'npt_unfix.in'
+        
+        self.params['ens_fix'] = ensemble_fix_fn
+        self.params['ens_unfix'] = ensemble_unfix_fn
 
         # generate configurations and add input files
+        seed_idx = 0
         for mem_i in range(self.params['members']):
-            self.params.update({'mc_seed': mc_seeds[mem_i]})
+            self.params.update({
+                'lang_seed': seeds[seed_idx],
+                'vel_seed': seeds[seed_idx+1],
+                'mc_seed': seeds[seed_idx+2]})
+            seed_idx += 3
             
             main_in = LmpInput(file_path=self.templates_dir/'main.in')
             main_in.add_params(self.params)
 
+            ensemble_fix_in = LmpInput(file_path=self.templates_dir/ensemble_fix_fn)
+            ensemble_fix_in.add_params(self.params)
+
+            ensemble_unfix_in = LmpInput(file_path=self.templates_dir/ensemble_unfix_fn)
+
             struct_in = LmpStructure(lattice_params=self.params)
-            self.state['runs'][mem_i]['input_files'].update({'config.in': struct_in, 'main.in': main_in})
+
+            self.state['runs'][mem_i]['input_files'].update({
+                'config.in': struct_in, 
+                'main.in': main_in,
+                ensemble_fix_fn: ensemble_fix_in,
+                ensemble_unfix_fn: ensemble_unfix_in})
 
     def build_directory(self):
         super().build_directory()
@@ -385,7 +412,7 @@ class MCMD(Study):
 
         # plot acceptance ratio
         axs[0].plot(self.data['timesteps'], self.data['acc_ratio'], '--o', ms=2, color='black')
-        axs[0].fill_between(self.data['timesteps'], self.data['acc_ratio']-self.data['acc_ratio_std'], self.data['acc_ratio']+self.data['acc_ratio_std'], alpha=0.5, color='black')
+        axs[0].fill_between(self.data['timesteps'], self.data['acc_ratio']-self.data['acc_ratio_std'], self.data['acc_ratio']+self.data['acc_ratio_std'], alpha=0.5, color='gray')
         axs[0].set_ylim([0, 1])
         axs[0].set_ylabel('Acceptance Ratio')
         axs[0].set_title('Metropolis Acceptance Ratio')

@@ -30,15 +30,14 @@ neigh_modify delay 10 check yes
 reset_timestep 0
 timestep ?timestep?
 
-fix 1 all nve
-fix 2 all langevin ?temp? ?temp? 100 12345
-fix 3 all momentum 100 linear 1 1 1
+include ?ens_fix?
+fix mom all momentum 100 linear 1 1 1
 
 log equil.log
 thermo_style custom step etotal temp
 thermo 1000
 
-velocity all create ?temp? 23456
+velocity all create ?temp? ?vel_seed?
 
 run ?equil?
 
@@ -59,9 +58,8 @@ dump 1 all custom ?snapshot? mc.dump id type x y z
 
 run ?mc?
 
-unfix 1
-unfix 2
-unfix 3
+include ?ens_unfix?
+unfix mom
 unfix mc
 undump 1
 
