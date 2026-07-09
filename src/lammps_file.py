@@ -216,7 +216,7 @@ class LmpStructure(LmpFile):
             elif params['order'] == 'separated':
                 center = np.array([self.size[0], self.size[1], self.size[2]])/2
                 pos_tree = cKDTree(self.positions)
-                _, solute_pos_idcs = pos_tree.query(center, self.at_composition[solute_sp])
+                _, solute_pos_idcs = pos_tree.query(center, at_composition[solute_sp])
 
                 for i in solute_pos_idcs:
                     self.types[i] = solute_type
