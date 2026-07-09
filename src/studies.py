@@ -361,29 +361,38 @@ class MCMD(Study):
         self.data['wc_final'] = wc_final
 
     def save_data(self):
+        colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
+
         # ------- thermodynamic parameters ------- #
 
-        fig, axs = plt.subplots((1, 4), figsize=(5, 20), sharex=True)
+        fig, axs = plt.subplots(5, 1, figsize=(17, 13), sharex=True)
         fig: plt.Figure = fig
         axs: list[plt.Axes] = axs
 
-        axs[0].plot(self.data['timesteps'], self.data['pot_e'], '--o', ms=2)
-        axs[0].fill_between(self.data['timesteps'], self.data['pot_e']-self.data['pot_e_std'], self.data['pot_e']+self.data['pot_e_std'], alpha=0.5, color='tab:blue')
-        axs[0].set_ylabel('Potential Energy [eV]')
+        # plot acceptance ratio
+        axs[0].plot(self.data['timesteps'], self.data['acc_ratio'], '--o', ms=2, color='black')
+        axs[0].fill_between(self.data['timesteps'], self.data['acc_ratio']-self.data['acc_ratio_std'], self.data['acc_ratio']+self.data['acc_ratio_std'], alpha=0.5, color='black')
+        axs[0].set_ylim([0, 1])
+        axs[0].set_ylabel('Metropolis Acceptance Ratio')
 
-        axs[1].plot(self.data['timesteps'], self.data['kin_e'], '--o', ms=2)
-        axs[1].fill_between(self.data['timesteps'], self.data['kin_e']-self.data['kin_e_std'], self.data['kin_e']+self.data['kin_e_std'], alpha=0.5, color='tab:orange')
+        axs[1].plot(self.data['timesteps'], self.data['pot_e'], '--o', ms=2, label='PE', color=colors[0])
+        axs[1].fill_between(self.data['timesteps'], self.data['pot_e']-self.data['pot_e_std'], self.data['pot_e']+self.data['pot_e_std'], alpha=0.5, color=colors[0])
+        axs[1].set_ylabel('Potential Energy [eV]')
+        axs[1].legend()
+
+        axs[1].plot(self.data['timesteps'], self.data['kin_e'], '--o', ms=2, label='KE', color=colors[1])
+        axs[1].fill_between(self.data['timesteps'], self.data['kin_e']-self.data['kin_e_std'], self.data['kin_e']+self.data['kin_e_std'], alpha=0.5, color=colors[1])
         axs[1].set_ylabel('Kinetic Energy [eV]')
 
-        axs[2].plot(self.data['timesteps'], self.data['pv'], '--o', ms=2)
-        axs[2].fill_between(self.data['timesteps'], self.data['pv']-self.data['pv_std'], self.data['pv']+self.data['pv_std'], alpha=0.5, color='tab:green')
+        axs[2].plot(self.data['timesteps'], self.data['pv'], '--o', ms=2, label='PV Work', color=colors[2])
+        axs[2].fill_between(self.data['timesteps'], self.data['pv']-self.data['pv_std'], self.data['pv']+self.data['pv_std'], alpha=0.5, color=colors[2])
         axs[2].set_ylabel('PV Work [eV]')
 
-        axs[3].plot(self.data['timesteps'], self.data['enthalpy'], '--o', ms=2)
-        axs[3].fill_between(self.data['timesteps'], self.data['enthalpy']-self.data['enthalpy_std'], self.data['enthalpy']+self.data['enthalpy_std'], alpha=0.5, color='tab:red')
+        axs[3].plot(self.data['timesteps'], self.data['enthalpy'], '--o', ms=2, label='Enthalpy', color=colors[3])
+        axs[3].fill_between(self.data['timesteps'], self.data['enthalpy']-self.data['enthalpy_std'], self.data['enthalpy']+self.data['enthalpy_std'], alpha=0.5, color=colors[3])
         axs[3].set_ylabel('Enthalpy [eV]')
 
-        axs[0].set_xlabel('Timestep')
+        axs[3].set_xlabel('Timestep')
         fig.savefig(self.dir/'thermo.png', bbox_inches="tight")
         plt.close()
 
@@ -395,84 +404,85 @@ class MCMD(Study):
                 e.write(f"{self.data['kin_e'][i]:<20.5f} {self.data['kin_e_std'][i]:<10.5f} {self.data['pv'][i]:<20.5f} {self.data['pv_std'][i]:<10.5f} ")
                 e.write(f"{self.data['enthalpy'][i]:<20.5f} {self.data['enthalpy_std'][i]:<10.5f}\n")
 
-        # plot acceptance ratio
-        plt.plot(self.data['timesteps'], self.data['acc_ratio'], '--o', ms=2)
-        plt.fill_between(self.data['timesteps'], self.data['acc_ratio']-self.data['acc_ratio_std'], self.data['acc_ratio']+self.data['acc_ratio_std'], alpha=0.5)
-        plt.ylim([0, 1])
-        plt.xlabel('Timestep')
-        plt.ylabel('Metropolis Acceptance Ratio')
-        plt.savefig(self.dir/'acc_ratio.png', bbox_inches="tight")
-        plt.close()
-
         # ------- Warren-Cowley parameters ------- #
-        
-        wc_dir = self.dir / 'wc_data'
-        wc_dir.mkdir(exist_ok=True)
 
-        # plot WC evolution data averaged across members with std for each shell separately
+        # WC evolution during simulation
+        fig, axs = plt.subplots(self.params['wc_shell'+1], 1, figsize=(self.params['wc_shell'+1]*4, 13), sharex=True)
+        fig: plt.Figure = fig
+        axs: list[plt.Axes] = axs
+
         for shi in range(self.params['wc_shell']):
             for i in range(len(self.params['species']))[:-1]:
                 for j in range(len(self.params['species']))[i+1:]:
                     pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
                     x, y = self.data['wc_timesteps'], self.data['wc'][:, shi, i, j]
                     yerr = (y - self.data['wc_std'][:, shi, i, j], y + self.data['wc_std'][:, shi, i, j])
-                    plt.plot(x, y, '--o', ms=2, label=pair_str)
-                    plt.fill_between(x, yerr[0], yerr[1], alpha=0.5)
+                    axs[shi].plot(x, y, '--o', ms=2, label=pair_str, color=colors[shi])
+                    axs[shi].fill_between(x, yerr[0], yerr[1], alpha=0.5, color=colors[shi])
             
-            plt.axhline(0, color='black', ls='--')
-            plt.xlabel('Timestep')
-            plt.ylabel('Warren-Cowley Parameter')
-            plt.legend()
-            plt.savefig(wc_dir/f'wc_shell_{shi+1}.png', bbox_inches="tight")
-            plt.close()
-
-            # write WC evolution data
-            with open(wc_dir/f'wc_shell_{shi}.out', 'w') as f:
-                f.write(f'Shell = {shi}\n\n')
-                for i, t in enumerate(self.data['wc_timesteps']):
-                    f.write(str(t)+'\n')
-                    f.write(np.array2string(self.data['wc'][i, shi, :, :])+'\n')
-                    f.write(np.array2string(self.data['wc_std'][i, shi, :, :])+'\n\n')
-
+            axs[shi].axhline(0, color='black', ls='--')
+            axs[shi].set_ylabel('Warren-Cowley Parameter')
+            axs[shi].set_title(f'Shell: {shi+1}')
+            axs[shi].legend()
+        
         # plot WC evolution for each shell together without std
         for i in range(len(self.params['species']))[:-1]:
             for j in range(len(self.params['species']))[i+1:]:
                 for shi in range(self.params['wc_shell']):
                     pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
                     x, y = self.data['wc_timesteps'], self.data['wc'][:, shi, i, j]
-                    plt.plot(x, y, label=f'Shell {shi+1}')
+                    axs[-1].plot(x, y, label=f'Shell {shi+1}', color=colors[shi])
 
-                plt.axhline(0, color='black', ls='--')
-                plt.xlabel('Timestep')
-                plt.ylabel('Warren-Cowley Parameter')
-                plt.legend()
-                plt.savefig(wc_dir/f'wc_{pair_str}.png', bbox_inches="tight" )
-                plt.close()
+                axs[-1].axhline(0, color='black', ls='--')
+                axs[-1].set_xlabel('Timestep')
+                axs[-1].set_ylabel('Warren-Cowley Parameter')
+                axs[-1].legend()
+        
+        fig.savefig(self.dir/f'wc.png', bbox_inches="tight")
+        plt.close()
 
-        # bin final configuration WC parameters and plot the histogram
+        # write WC evolution data
+        with open(self.dir/f'wc.out', 'w') as f:
+            for shi in range(self.params['wc_shell']):
+                f.write(f'Shell = {shi+1}\n\n')
+                for i, t in enumerate(self.data['wc_timesteps']):
+                    f.write(str(t)+'\n')
+                    f.write(np.array2string(self.data['wc'][i, shi, :, :])+'\n')
+                    f.write(np.array2string(self.data['wc_std'][i, shi, :, :])+'\n\n')
+                f.write('-'*50+'\n\n')
+
+        # bin final configuration WC parameters and plot the histogram for each shell
+        fig, axs = plt.subplots(self.params['wc_shell'], 1, figsize=(self.params['wc_shell'+1]*4, 13), sharex=True)
+        fig: plt.Figure = fig
+        axs: list[plt.Axes] = axs
+
         for shi in range(self.params['wc_shell']):
             for i in range(len(self.params['species']))[:-1]:
                 for j in range(len(self.params['species']))[i+1:]:
                     pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
                     histo, bin_edges = np.histogram(self.data['wc_final'][:, shi, i, j], bins=40, density=True)
-                    plt.bar(bin_edges[:-1], histo, label=pair_str, linewidth=1, edgecolor='navy', width=np.diff(bin_edges))
+                    axs[shi].bar(bin_edges[:-1], histo, label=pair_str, linewidth=1, edgecolor='navy', width=np.diff(bin_edges), color=colors[shi])
 
-            plt.vlines(0, 0, np.max(histo), color='black', ls='--')
-            plt.xlabel('Warren-Cowley Parameter')
-            plt.ylabel('Frequency')
-            plt.legend()
-            plt.savefig(wc_dir/f'wc_final_shell_{shi+1}.png', bbox_inches="tight" )
-            plt.close()
+            axs[shi].vlines(0, 0, np.max(histo), color='black', ls='--')
+            axs[shi].set_ylabel('Frequency')
+            axs[shi].set_title(f'Shell: {shi+1}')
+            axs[shi].legend()
+            
+        axs[-1].set_xlabel('Warren-Cowley Parameter')
+        fig.savefig(self.dir/f'wc_final.png', bbox_inches="tight" )
+        plt.close()
 
-            # write final configuration WC data
-            with open(wc_dir/f'wc_final_shell_{shi}.out', 'w') as f:
+        # write final configuration WC data
+        with open(self.dir/f'wc_final.out', 'w') as f:
+            for shi in range(self.params['wc_shell']):
+                f.write(f'Shell = {shi+1}\n\n')
                 for mem_i in range(self.params['members']):
                     f.write(str(mem_i)+'\n')
                     f.write(np.array2string(self.data['wc_final'][mem_i, shi, :, :])+'\n\n')
-            
                 # compute average
                 f.write('Average\n')
-                f.write(np.array2string(np.mean(self.data['wc_final'], axis=0)[shi]))
+                f.write(np.array2string(np.mean(self.data['wc_final'], axis=0)[shi])+'\n')
+                f.write('-'*50+'\n\n')
 
 @register_study
 class PointDefectSRO(Study):
