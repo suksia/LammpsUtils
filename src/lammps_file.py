@@ -365,6 +365,8 @@ class LmpStructure(LmpFile):
         # velocity set command in LAMMPS requires atom IDs to be consecutive
         self.renumber_ids()
 
+        return self.positions[ref_pos_i]
+
     def renumber_ids(self):
         """Redefine atom IDs to be consecutive."""
         self.ids = np.arange(1, len(self.ids)+1, dtype=np.int32)

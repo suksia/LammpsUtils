@@ -572,6 +572,16 @@ class PDI(Study):
             'maxiter': unprefix(self.input_yml['minimize'][2]),
             'maxeval': unprefix(self.input_yml['minimize'][3])})
 
+        # neighbors up to 5th shell (cutoffs are half-way between ideal shell radii)
+        if self.params['lattice'] == 'bcc':
+            self.params['num_neighbors'] = [8, 6, 12, 24, 8]
+            self.params['shell_cutoff'] = [r*self.params['lattice_const'] for r in [0, 0.933, 1.207, 1.536, 1.695, 1.866]]
+        else:
+            raise ValueError(f"Lattice type {self.params['lattice']} is either unrecognized or unsupported")
+
+        if 'max_shell' not in self.input_yml.keys():
+            self.params['max_shell'] = 3
+
         # define input files for each member
         for mem_i in range(self.params['members']):
             # main input files for perfect and defective systems
@@ -632,7 +642,7 @@ class PDI(Study):
             }
 
             def_struct: LmpStructure = pris_dump.to_struct(pris_lat_params)
-            def_struct.insert_point_defect(def_type, def_species, def_orientation)
+            self.params['def_site_pos'] = def_struct.insert_point_defect(def_type, def_species, def_orientation)
 
             self.state['defective'][mem_i]['input_files'].update({'defective.struct': def_struct})
         
@@ -641,9 +651,9 @@ class PDI(Study):
         super().run_lammps(sim_ids=['defective'], lmp_fn='defective.in')
         
     def analyze(self):
-         # compute insertion energy evolution
+        # compute insertion energies
         e_pris = np.zeros(self.params['members'])
-        e_def = np.zeros((self.params['members']))
+        e_def = np.zeros(self.params['members'])
 
         for mem_i in range(self.params['members']):
             energies_log = LmpLog(self.state['defective'][mem_i]['dir']/'energies.log')
@@ -653,6 +663,23 @@ class PDI(Study):
             e_def[mem_i] = energies[-1]
 
         self.data.update({'e_pris': e_pris, 'e_def': e_def, 'e_ins': e_def-e_pris})
+
+        # compute the composition around the insertion position prior to inserting the defect
+        neigh_comp = np.zeros(((self.params['members']), self.params['max_shell'], len(self.params['species'])))
+        for mem_i in range(self.params['members']):
+            pris_struct: LmpStructure = self.state['pristine'][mem_i]['input_files']['pristine.struct']
+            
+            neigh_comp[mem_i, :, :] = neighbor_composition(
+                sum(self.params['num_neighbors'][:self.params['max_shell']]),
+                self.params['shell_cutoff'][:self.params['max_shell']+1],
+                pris_struct.positions,
+                self.params['def_site_pos'],
+                pris_struct.types,
+                np.array([pris_struct.box['xlo'], pris_struct.box['ylo'], pris_struct.box['zlo']]),
+                pris_struct.boxsize
+            )
+        
+        self.data.update({'neigh_comp': neigh_comp})
 
         # obtain positions of defective cells
         for mem_i in range(self.input_yml['members']):
@@ -694,7 +721,7 @@ class PDI(Study):
                 e.write(f"{mem_i:<10} {self.data['e_pris'][mem_i]:<15.4f} {self.data['e_def'][mem_i]:<15.4f} {self.data['e_ins'][mem_i]:<15.4f}\n")
 
         # compute and plot insertion energy histogram for first and last snapshot
-        e_ins_histo, e_ins_bin_edges = np.histogram(self.data['e_ins'], bins=40, density=True)
+        e_ins_histo, e_ins_bin_edges = np.histogram(self.data['e_ins'], bins=40)
 
         plt.bar(e_ins_bin_edges[:-1], e_ins_histo, linewidth=1, edgecolor='navy', width=np.diff(e_ins_bin_edges))
         plt.xlabel('Insertion Energy [eV]')
@@ -702,196 +729,28 @@ class PDI(Study):
         plt.savefig(self.dir/'insertion_histo.png', bbox_inches="tight")
         plt.close()
 
-@register_study
-class PointDefectSRO(Study):#
-    def init_state(self):
-        # setup containers
-        self.sim_ids = ['pristine', 'defective']
-        mem_dict = {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}
-        self.state.update({sim_i: deepcopy(mem_dict) for sim_i in self.sim_ids})
-        
-        # update params common to all members/configurations
-        self.params.update({
-            'species': list(self.input_yml['composition'].keys()),
-            'elements': tilps(list(self.input_yml['composition'].keys())),
-            'temp': self.input_yml['temperature'],
-            'equil': unprefix(self.input_yml['equil']),
-            'mc_freq': unprefix(self.input_yml['mc'][0]),
-            'mc_attempts': unprefix(self.input_yml['mc'][1]),
-            'mc': unprefix(self.input_yml['mc'][2]),
-            'snapshot': unprefix(self.input_yml['snapshot']),
-            'etol': f"{self.input_yml['minimize'][0]:.2e}",
-            'ftol': f"{self.input_yml['minimize'][1]:.2e}",
-            'maxiter': unprefix(self.input_yml['minimize'][2]),
-            'maxeval': unprefix(self.input_yml['minimize'][3])})
-
-        self.params.update({'num_snapshots': int(self.params['mc']/self.params['snapshot'])-1})
-
-        # randomly choose configurations
-        if 'dataset' in self.input_yml.keys():
-            dataset_dir = Path(self.input_yml['dataset'])
-            if not dataset_dir.exists():
-                raise ValueError(f'Dataset directory {dataset_dir} does not exist')
-            
-            dataset_configs = [fp for fp in dataset_dir.iterdir() if fp.is_file()]
-
-            # make sure there are enough configurations
-            if self.params['members'] > len(dataset_configs):
-                raise ValueError(f"Number of members ({self.params['members']}) exceeds number of configurations available in dataset ({len(dataset_configs)})")
-            
-            dataset_configs = [dataset_configs[i] for i in random_range(0, len(dataset_configs))]
-
-        # create seeds for thermostat, velocities, and atom/swap
-        seeds = create_seeds(3*self.params['members'])
-
-        # define input files for each member
-        seed_idx = 0
-        for mem_i in range(self.params['members']):
-            # main input files for perfect and defective systems
-            pris_in = LmpInput(file_path=self.templates_dir/'pristine.in')
-            pris_in.add_params(self.params)
-            self.state['pristine'][mem_i]['input_files'].update({'pristine.in': pris_in})
-
-            self.params.update({
-                'thermo_seed': seeds[seed_idx],
-                'vel_seed': seeds[seed_idx+1],
-                'mc_seed': seeds[seed_idx+2],
-            })
-            seed_idx += 3
-
-            def_in = LmpInput(file_path=self.templates_dir/'defective.in')
-            def_in.add_params(self.params)
-            self.state['defective'][mem_i]['input_files'].update({'defective.in': def_in})
-            
-            # either load a configuration or make one from scratch
-            if 'dataset' in self.input_yml.keys():
-                pris_struct = LmpStructure(file_path=dataset_configs[mem_i])
-            else:
-                pris_struct = LmpStructure(lattice_params=self.params)
-
-            self.state['pristine'][mem_i]['input_files'].update({'pristine.struct': pris_struct})
-
-    def build_directory(self):
-        super().build_directory()
-        self.dir.mkdir(exist_ok=True)
-
-        runs_dir: Path = self.dir / 'runs'
-        runs_dir.mkdir(exist_ok=True)
-
-        for mem_i in range(self.input_yml['members']):
-            subdir = runs_dir / str(mem_i)
-            subdir.mkdir(exist_ok=True)
-            self.state['pristine'][mem_i].update({'dir' : subdir})
-            self.state['defective'][mem_i].update({'dir' : subdir})
-
-    def run_lammps(self):
-        # relax pristine system first
-        logger.debug(f'Starting with first set of LAMMPS simulations for pristine system')
-        super().run_lammps(sim_ids=['pristine'], lmp_fn='pristine.in')
-
-        # insert point defect into pristine system
-        for mem_i in range(self.params['members']):
-            subdir = self.state['pristine'][mem_i]['dir']
-            pris_dump = LmpDump(subdir / 'pristine.dump')
-
-            if self.input_yml['defect'] == 'vac':
-                def_type = 'vac'
-                def_species = None
-                def_orientation = None
-            else:
-                def_type = self.input_yml['int_type']
-                def_species = self.input_yml['int_species']
-                def_orientation = str(self.input_yml['int_orient'])
-
-            pris_struct: LmpStructure = self.state['pristine'][mem_i]['input_files']['pristine.struct']
-            pris_lat_params = {
-                'lattice': pris_struct.lattice,
-                'size': pris_struct.size,
-                'composition_str': pris_struct.composition_str
-            }
-
-            def_struct: LmpStructure = pris_dump.to_struct(pris_lat_params)
-            def_struct.insert_point_defect(def_type, def_species, def_orientation)
-
-            self.state['defective'][mem_i]['input_files'].update({'defective.struct': def_struct})
-        
-        # run MC+MD loop for defective system
-        logger.debug(f'Running second set of LAMMPS simulations for defective system')
-        super().run_lammps(sim_ids=['defective'], lmp_fn='defective.in')
-    
-    def analyze(self):
-        # compute insertion energy evolution
-        e_pris = np.zeros(self.params['members'])
-        e_def = np.zeros((self.params['members'], self.params['num_snapshots']))
-        e_ins = np.zeros((self.params['members'], self.params['num_snapshots']))
-
-        for mem_i in range(self.params['members']):
-            energies_log = LmpLog(self.state['defective'][mem_i]['dir']/'energies.log')
-
-            e_pris[mem_i] = energies_log.data_df['PotEng'][0]
-            e_def[mem_i, :] = energies_log.data_df['PotEng'][1:].to_numpy()
-
-            e_ins[mem_i, :] = e_def[mem_i, :] - e_pris[mem_i]
-
-        self.data['timesteps'] = energies_log.data_df.index.to_numpy()[1:]
-
-        self.data['e_pris'] = e_pris
-        self.data['e_def'] = e_def
-        self.data['e_ins'] = e_ins
-
-        # obtain positions of defective cells
-        for mem_i in range(self.input_yml['members']):
-            pipeline = import_file(self.state['defective'][mem_i]['dir']/'quench.dump')
-
-            # outputs sites as particles DataCollection with "Occupancy" property
-            ws = WignerSeitzAnalysisModifier()
-            pipeline.modifiers.append(ws)
-
-            # custom modifier to obtain a vacancy position for each snapshot
-            def modify(frame, data):
-                # per-site occupancy (0 = vacancy, 1 = normal site, 2 = interstitial)
-                occupancies = data.particles['Occupancy']
-
-                # add a boolean "Selection" property which will be 1 only for pristine cells
-                selection = data.particles_.create_property('Selection')
-                selection[...] = occupancies != 1
-
-                # add a data attribute for the current frame which is the vacancy position
-                data.attributes['DefectCount'] = np.sum(selection)
-                data.attributes['DefectPosition']  = data.particles.positions[np.nonzero(selection)]
-                data.attributes['Occupancy'] = data.particles['Occupancy'][np.nonzero(selection)]
-
-            # write vacancy positions
-            pipeline.modifiers.append(modify)
-            export_file(
-                pipeline, 
-                self.state['defective'][mem_i]['dir']/'ovito.out', 
-                'txt/attr',
-                columns = ['Timestep', 'Occupancy', 'DefectCount', 'DefectPosition'],
-                multiple_frames = True)
-
-    def save_data(self):
-        # write out pristine and defective energies
-        with open(self.dir/'energies.out', 'w') as e:
-            e.write(f"Timesteps: {np.array2string(self.data['timesteps'], max_line_width=1000)}\n\n")
-
+        # write out neighbor composition analysis
+        with open(self.dir/'neighbors.out', 'w') as n:
             for mem_i in range(self.input_yml['members']):
-                e.write(f"{mem_i:<5}  {self.data['e_pris'][mem_i]:<15.4f}  {np.array2string(self.data['e_def'][mem_i], max_line_width=1000)}\n")
+                n.write(f"{mem_i}\n")
+                n.write(np.array2string(self.data['neigh_comp'])+'\nn')
 
-        # compute and plot insertion energy histogram for first and last snapshot
-        first_histo, bin_edges = np.histogram(self.data['e_ins'][:, 0], bins=40, density=True)
-        last_histo, bin_edges = np.histogram(self.data['e_ins'][:, -1], bins=40, density=True)
+        # overlay insertion energy histogram with neighbor composition per shell and species
+        fig, axs = plt.subplots(self.params['max_shell'], len(self.params['species']), sharex=True, sharey=True)
 
-        fig, ax = plt.subplots(2, figsize=(10, 10))
-
-        ax[0].bar(bin_edges[:-1], first_histo/np.max(first_histo), linewidth=1, edgecolor='navy', width=np.diff(bin_edges))
-        ax[1].bar(bin_edges[:-1], last_histo/np.max(first_histo), linewidth=1, edgecolor='navy', width=np.diff(bin_edges))
-
-        ax[0].vlines(0, 0, 1, color='black', ls='--')
-        ax[1].vlines(0, 0, 1, color='black', ls='--')
-
-        fig.savefig(self.dir/'final_insertion.png', bbox_inches="tight")
-
-        # compute average insertion energy evolution
-
-        # write out pristine and defective energies
+        for shi in range(self.params['max_shell']):
+            for spi in range(len(self.params['species'])):
+                axs[shi, spi].bar(e_ins_bin_edges[:-1], e_ins_histo, linewidth=1, edgecolor='navy', width=np.diff(e_ins_bin_edges))
+                axs[shi, spi].scatter(self.data['e_ins'], self.data['neigh_comp'][:, spi])
+        
+        # columns
+        for spi in range(len(self.params['species'])):
+            axs[-1, spi].set_xlabel('Insertion Energy [eV]')
+            axs[0, spi].set_title(self.params['species'][spi])
+        
+        # rows
+        for shi in range(self.params['max_shell']):
+            axs[shi, 1].set_ylabel('Concentration [at.%]')
+        
+        fig.savefig(self.dir/'neighbors.png', bbox_inches="tight")
+        plt.close()

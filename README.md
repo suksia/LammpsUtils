@@ -100,4 +100,9 @@ int_orientation: <crystal direction indices as a list (e.g., [1, 1, 1] is the <1
 processors: <number of MPI ranks for each independent simulation to be run in parallel>
 
 minimize: <minimization criteria for final quenching as a list [etol, ftol, maxiter, maxeval]>
+max_shell: <number of shells to compute neighbor composition for (default: 3, max: 5)>
 ```
+
+## Notes
+
+1. When calculating the Warren-Cowley parameters, the initial lattice constant is used rather than the version containing volume relaxations. If the change in lattice constant is small, then this note can be safely ignored, otherwise the wrong amount of neighbors will be counted for each shell. In bcc systems, the distances corresponding to the middle of the gap between nearest neighbor shells are $a_0\times[0, 0.933, 1.207, 1.536, 1.695, 1.866]$. Since the smallest gap is $0.159a_0$, the limit is when $\Delta a_0 < 0.159a_0$. For $a_0\approx 3.075\,\AA$, this is $\Delta a_0 = 0.488\,\AA$. A good initial lattice constant usually results relaxations on the order $\pm0.01-0.1 \AA$, which is far below the limit.

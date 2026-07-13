@@ -137,3 +137,39 @@ def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.nd
                 wc[shi, to-1, ti-1] = 1 - (neighbors[shi, to-1, ti-1] / np.sum(neighbors[shi, to-1, :])) / composition[to]
 
     return wc
+
+def neighbor_composition(num_neighbors: int, shell_radii: list[float], positions: np.ndarray, target_position: np.ndarray, types: np.ndarray, boxlo:np.ndarray, boxsize: np.ndarray):
+    """Compute the chemical composition of shells around a lattice site."""
+    # list like [1, 2, 1, 1] -> list like [1, 2]
+    unique_types = sorted(list(set(types))) 
+    num_unique_types = len(unique_types)
+
+    # move box back to origin and correct positions
+    positions = positions - boxlo
+    
+    # coordinates are not required to be within the box, so wrap any that are outside the box
+    positions = positions.round(decimals=4)
+    unw_num_imgs = np.floor_divide(positions, boxsize)
+    positions = positions - unw_num_imgs*boxsize
+
+    # k-d trees have O(log n) speed
+    position_tree = cKDTree(positions, boxsize=boxsize)
+
+    # square matrix containing the composition for each shell
+    num_shells = len(shell_radii)-1
+    neighbors = np.zeros((num_shells, num_unique_types))
+
+    neigh_dist, neigh_idcs = position_tree.query(target_position, k=num_neighbors+1)
+    for shi in range(num_shells):
+        # atom position indices within shell
+        shell_mask = (neigh_dist > shell_radii[shi]) & (neigh_dist < shell_radii[shi+1])
+        shell_idcs = neigh_idcs[shell_mask]
+        
+        for ni in shell_idcs:
+            neigh_type = types[ni]
+            neighbors[shi, neigh_type-1] += 1
+
+        # normalize composition
+        neighbors[shi, :] /= np.sum(neighbors[shi, :])
+
+    return neighbors
