@@ -536,6 +536,167 @@ class MCMD(Study):
                     f.write('\n\n'+'-'*50+'\n\n')
 
 @register_study
+class PDI(Study):
+    def init_state(self):
+        # setup containers
+        self.sim_ids = ['pristine', 'defective']
+        mem_dict = {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}
+        self.state.update({sim_i: deepcopy(mem_dict) for sim_i in self.sim_ids})
+
+        # update params common to all members/configurations
+        self.params.update({
+            'species': list(self.input_yml['composition'].keys()),
+            'elements': tilps(list(self.input_yml['composition'].keys())),
+            'snapshot': unprefix(self.input_yml['snapshot']),
+            'etol': f"{self.input_yml['minimize'][0]:.2e}",
+            'ftol': f"{self.input_yml['minimize'][1]:.2e}",
+            'maxiter': unprefix(self.input_yml['minimize'][2]),
+            'maxeval': unprefix(self.input_yml['minimize'][3])})
+        
+        # randomly choose configurations
+        if 'dataset' in self.input_yml.keys():
+            dataset_dir = Path(self.input_yml['dataset'])
+            if not dataset_dir.exists():
+                raise ValueError(f'Dataset directory {dataset_dir} does not exist')
+            
+            dataset_configs = [fp for fp in dataset_dir.iterdir() if fp.is_file()]
+
+            # make sure there are enough configurations
+            if self.params['members'] > len(dataset_configs):
+                raise ValueError(f"Number of members ({self.params['members']}) exceeds number of configurations available in dataset ({len(dataset_configs)})")
+            
+            dataset_configs = [dataset_configs[i] for i in random_range(0, len(dataset_configs))]
+
+        # define input files for each member
+        for mem_i in range(self.params['members']):
+            # main input files for perfect and defective systems
+            pris_in = LmpInput(file_path=self.templates_dir/'pristine.in')
+            pris_in.add_params(self.params)
+            self.state['pristine'][mem_i]['input_files'].update({'pristine.in': pris_in})
+
+            def_in = LmpInput(file_path=self.templates_dir/'defective.in')
+            def_in.add_params(self.params)
+            self.state['defective'][mem_i]['input_files'].update({'defective.in': def_in})
+            
+            # either load a configuration or make one from scratch
+            if 'dataset' in self.input_yml.keys():
+                pris_struct = LmpStructure(file_path=dataset_configs[mem_i])
+            else:
+                pris_struct = LmpStructure(lattice_params=self.params)
+
+            self.state['pristine'][mem_i]['input_files'].update({'pristine.struct': pris_struct})
+
+    def build_directory(self):
+        super().build_directory()
+        self.dir.mkdir(exist_ok=True)
+
+        runs_dir: Path = self.dir / 'runs'
+        runs_dir.mkdir(exist_ok=True)
+
+        # pristing and defective systems share a directory
+        for mem_i in range(self.input_yml['members']):
+            subdir = runs_dir / str(mem_i)
+            subdir.mkdir(exist_ok=True)
+            self.state['pristine'][mem_i].update({'dir' : subdir})
+            self.state['defective'][mem_i].update({'dir' : subdir})
+
+    def run_lammps(self):
+        # relax pristine system first
+        logger.debug(f'Starting with first set of LAMMPS simulations for pristine system')
+        super().run_lammps(sim_ids=['pristine'], lmp_fn='pristine.in')
+
+        # insert point defect into pristine system
+        for mem_i in range(self.params['members']):
+            subdir = self.state['pristine'][mem_i]['dir']
+            pris_dump = LmpDump(subdir / 'pristine.dump')
+
+            if self.input_yml['defect'] == 'vac':
+                def_type = 'vac'
+                def_species = None
+                def_orientation = None
+            else:
+                def_type = self.input_yml['int_type']
+                def_species = self.input_yml['int_species']
+                def_orientation = str(self.input_yml['int_orient'])
+
+            pris_struct: LmpStructure = self.state['pristine'][mem_i]['input_files']['pristine.struct']
+            pris_lat_params = {
+                'lattice': pris_struct.lattice,
+                'size': pris_struct.size,
+                'composition_str': pris_struct.composition_str
+            }
+
+            def_struct: LmpStructure = pris_dump.to_struct(pris_lat_params)
+            def_struct.insert_point_defect(def_type, def_species, def_orientation)
+
+            self.state['defective'][mem_i]['input_files'].update({'defective.struct': def_struct})
+        
+        # run MC+MD loop for defective system
+        logger.debug(f'Running second set of LAMMPS simulations for defective system')
+        super().run_lammps(sim_ids=['defective'], lmp_fn='defective.in')
+        
+    def analyze(self):
+         # compute insertion energy evolution
+        e_pris = np.zeros(self.params['members'])
+        e_def = np.zeros((self.params['members']))
+
+        for mem_i in range(self.params['members']):
+            energies_log = LmpLog(self.state['defective'][mem_i]['dir']/'energies.log')
+
+            e_pris[mem_i] = energies_log.data_df['PotEng'][0]
+            e_def[mem_i] = energies_log.data_df['PotEng'][-1]
+
+        self.data.update({'e_pris': e_pris, 'e_def': e_def, 'e_ins': e_def-e_pris})
+
+        # obtain positions of defective cells
+        for mem_i in range(self.input_yml['members']):
+            pipeline = import_file(self.state['defective'][mem_i]['dir']/'defective.dump')
+
+            # outputs sites as particles DataCollection with "Occupancy" property
+            ws = WignerSeitzAnalysisModifier()
+            pipeline.modifiers.append(ws)
+
+            # custom modifier to obtain a defect position(s) for each snapshot
+            def modify(frame, data):
+                # per-site occupancy (0 = vacancy, 1 = normal site, 2 = interstitial)
+                occupancies = data.particles['Occupancy']
+
+                # add a boolean "Selection" property which will be 1 only for pristine cells
+                selection = data.particles_.create_property('Selection')
+                selection[...] = occupancies != 1
+
+                # add a data attribute for the current frame which is the defect position
+                data.attributes['DefectCount'] = np.sum(selection)
+                data.attributes['DefectPosition']  = data.particles.positions[np.nonzero(selection)]
+                data.attributes['Occupancy'] = data.particles['Occupancy'][np.nonzero(selection)]
+
+            # write defect positions
+            pipeline.modifiers.append(modify)
+            export_file(
+                pipeline, 
+                self.state['defective'][mem_i]['dir']/'ovito.out', 
+                'txt/attr',
+                columns = ['Timestep', 'Occupancy', 'DefectCount', 'DefectPosition'],
+                multiple_frames = True)
+
+    def save_data(self):
+        # write out pristine and defective energies
+        with open(self.dir/'energies.out', 'w') as e:
+            e.write(f"Timesteps: {np.array2string(self.data['timesteps'], max_line_width=1000)}\n\n")
+
+            for mem_i in range(self.input_yml['members']):
+                e.write(f"{mem_i:<5}  {self.data['e_pris'][mem_i]:<15.4f}  {np.array2string(self.data['e_def'][mem_i], max_line_width=1000)}\n")
+
+        # compute and plot insertion energy histogram for first and last snapshot
+        e_ins_histo, e_ins_bin_edges = np.histogram(self.data['e_ins'], bins=40, density=True)
+
+        plt.bar(e_ins_bin_edges[:-1], e_ins_histo, linewidth=1, edgecolor='navy', width=np.diff(e_ins_bin_edges))
+        plt.xlabel('Insertion Energy [eV]')
+        plt.ylabel('Frequency')
+        plt.savefig(self.dir/'insertion_histo.png', bbox_inches="tight")
+        plt.close()
+
+@register_study
 class PointDefectSRO(Study):
     def init_state(self):
         # setup containers

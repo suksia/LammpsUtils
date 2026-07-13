@@ -1,65 +1,99 @@
-The point of this package is to automate some common studies performed in LAMMPS, primarily focused on metallic systems.
+This package supports research on concentrated alloys conducted by the RDMAP research group within the Penn State Nuclear Engineering department.
 
-## `GenerateConfigurations`
+Two study classes are currently available: `MCMD` for evaluating short range order (SRO) in bcc refractory alloys, and `PDI` for evaluating the distribution of point defect insertion energies due to variations in the local chemical environment.
 
-Scope: cubic binary concentrated alloys
+For each study, a brief workflow is provided along with the input keyword argument pairs required to run a study.
 
-This study is designed to generate a dataset of ready-to-use configurations in an ensemble representing a concentrated substitutional alloy. It consists of the the following workflow
-1. Sample a random configuration
-2. Energy minimize until internal pressure is relieved
-3. Equilibrate to the target temperature
-4. Perform a hybrid Monte Carlo + molecular dynamics run to approach a real configuration
-5. Quench the final configuration
+## `MCMD`
 
-## `Diffusion`
+__Scope:__ cubic concentrated alloys
 
-Scope: cubic elemental metals
+This study is designed to perform a series of independent hybrid Monte Carlo with molecular dynamics (MCMD) simulations on unique starting configurations. The final configuration for each simulation is then quenched and saved as part of a reusable dataset. 
 
-This study has the following workflow:
-1. Equilibriate the pristine lattice
-2. Run MD to allow for diffusion
-3. Compute the total MSD
-4. 
-4. Remove thermal motion by energy minimizing snapshots from diffusion
-5. Perform a Wigner-Seitz analysis to identify the vacancy position in each snapshot
-6. Calculate the mean squared displacement and obtain the diffusion constant
-7. Repeat 1-6 for different temperatures
-8. Fit an Arrhenius plot for D(T) and obtain the activation energy
+### Workflow:
 
-## `VacancyDiffusion`
+1. Sample a random, separated, or B2 ordered configuration
+2. Enthalpy minimize
+3. Equilibrate to the target temperature in the NVT or NPT ensemble
+4. Perform a MCMD run to sample from configuration space by minimizing the potential energy
+5. Energy minimize the final configuration
 
-Scope: cubic elemental metals
+### Input File: 
 
-This study has the following workflow:
-1. Equilibriate the pristine lattice
-2. Insert a vacancy and perform a quick re-equilbriation
-3. Run MD to allow the vacancy to diffuse
-4. Remove thermal motion by energy minimizing snapshots from diffusion
-5. Perform a Wigner-Seitz analysis to identify the vacancy position in each snapshot
-6. Calculate the mean squared displacement and obtain the diffusion constant
-7. Repeat 1-6 for different temperatures
-8. Fit an Arrhenius plot for D(T) and obtain the activation energy
+```yaml
+name: <directory name of new study>
+type: MCMD
+dir: <parent or restart directory path>
 
+lattice: <bcc>
+lattice_const: <conventional cell length>
+size: <list of supercell replications (e.g., [3, 3, 3])>
+composition:
+    <element 1 in potential file>: <atomic percentage as a whole number>
+    <element 2 in potential file>: <atomic percentage as a whole number>
+    ...
+order: <random, separated, B2>
 
+pair_style: <LAMMPS pair style type>
+potential: <filename of interatomic potential in LammpsUtils/potentials/>
+skin: <skin distance for neighbor list>
 
+members: <number of independent simulations>
+timestep: <MD timestep in ps>
+temperature: <Metropolis sampling and MD temperature>
+ensemble: <langevin, npt>
+Tdamp: <coupling or friction constant for thermostat>
+Pdamp: <coupling constant for barostate (for npt)>
+processors: <number of MPI ranks for each independent simulation to be run in parallel>
 
+minimize: <minimization criteria for final quenching as a list [etol, ftol, maxiter, maxeval]>
+equil: <number of equilibration timesteps before MCMD>
+mc: <fix atom/swap criteria as a list [freq, nswaps, nsteps]>
+snapshot: <number of timesteps between snapshots>
+wc_shell: <number of shells to compute Warren-Cowley parameters for (default: 3, max: 5)>
+```
 
+## `PDI`
 
+__Scope:__ cubic concentrated alloys
 
-NOTE: ELEMENTS SHOULD BE SPECIFIED IN THE ORDER GIVEN BY THE POTENTIAL
+This study is designed to insert a point defect into a series of independent configurations and evaluate the distribution of _insertion_ energy. Note, the insertion energy does not contain chemical, electrostatic, or finite-size corrections. Point defect formation energy can be computed from the insertion energy via $$E_\text{form} = E_\text{ins} \pm \mu + qE_F + E_\text{corr},$$
+where $+\mu$ corresponds to a vacancy and $-\mu$ for a self-interstitial. Note that the 0K lattice constant is used for both pristine and defective cells.
 
+### Workflow:
 
-state
-|-- sim0
-|   |- mem0
-|   |   |- input_files -> all files required to run LAMMPS for member
-|   |   |- status -> 0 = ready, 1 = running, 2 = finished
-|   |   |- dir -> directory
-|   |   |- any other kwargs that are associated with this member
+1. Sample a random, separated, or B2 ordered configuration, or load one from a dataset
+2. Enthalpy minimize pristine cell
+3. Insert a point defect on the lattice site closest to the center of the simulation box
+4. Energy minimize the defective configuration
+5. Compute the insertion energy $E_\text{ins} = E_\text{def} - E_\text{pris}$
 
+### Input File: 
 
+```yaml
+name: <directory name of new study>
+type: PDI
+dir: <parent or restart directory path>
 
-|   |- mem1
-|-- sim1
-|
-...
+dataset: <path to directory containing LAMMPS data files>
+
+OR
+
+lattice: <bcc>
+lattice_const: <conventional cell length>
+size: <list of supercell replications (e.g., [3, 3, 3])>
+composition:
+    <element 1 in potential file>: <atomic percentage as a whole number>
+    <element 2 in potential file>: <atomic percentage as a whole number>
+    ...
+order: <random, separated, B2>
+
+pair_style: <LAMMPS pair style type>
+potential: <filename of interatomic potential in LammpsUtils/potentials/>
+skin: <skin distance for neighbor list>
+
+members: <number of independent simulations>
+processors: <number of MPI ranks for each independent simulation to be run in parallel>
+
+minimize: <minimization criteria for final quenching as a list [etol, ftol, maxiter, maxeval]>
+```
