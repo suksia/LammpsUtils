@@ -93,6 +93,10 @@ potential: <filename of interatomic potential in LammpsUtils/potentials/>
 skin: <skin distance for neighbor list>
 
 members: <number of independent simulations>
+defect: <vac, int>
+int_type: <crowd, db; type of interstitial structure>
+int_species: <element name of interstitial>
+int_orientation: <crystal direction indices as a list (e.g., [1, 1, 1] is the <111> direction)>
 processors: <number of MPI ranks for each independent simulation to be run in parallel>
 
 minimize: <minimization criteria for final quenching as a list [etol, ftol, maxiter, maxeval]>

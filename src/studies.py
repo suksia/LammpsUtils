@@ -542,16 +542,6 @@ class PDI(Study):
         self.sim_ids = ['pristine', 'defective']
         mem_dict = {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}
         self.state.update({sim_i: deepcopy(mem_dict) for sim_i in self.sim_ids})
-
-        # update params common to all members/configurations
-        self.params.update({
-            'species': list(self.input_yml['composition'].keys()),
-            'elements': tilps(list(self.input_yml['composition'].keys())),
-            'snapshot': unprefix(self.input_yml['snapshot']),
-            'etol': f"{self.input_yml['minimize'][0]:.2e}",
-            'ftol': f"{self.input_yml['minimize'][1]:.2e}",
-            'maxiter': unprefix(self.input_yml['minimize'][2]),
-            'maxeval': unprefix(self.input_yml['minimize'][3])})
         
         # randomly choose configurations
         if 'dataset' in self.input_yml.keys():
@@ -566,6 +556,21 @@ class PDI(Study):
                 raise ValueError(f"Number of members ({self.params['members']}) exceeds number of configurations available in dataset ({len(dataset_configs)})")
             
             dataset_configs = [dataset_configs[i] for i in random_range(0, len(dataset_configs))]
+
+            # load a config to determine the composition from the comment line
+            pris_struct = LmpStructure(file_path=dataset_configs[0])
+            composition = pris_struct.composition
+        else:
+            composition = self.input_yml['composition']
+        
+        # update params common to all members/configurations
+        self.params.update({
+            'species': list(composition.keys()),
+            'elements': tilps(list(composition.keys())),
+            'etol': f"{self.input_yml['minimize'][0]:.2e}",
+            'ftol': f"{self.input_yml['minimize'][1]:.2e}",
+            'maxiter': unprefix(self.input_yml['minimize'][2]),
+            'maxeval': unprefix(self.input_yml['minimize'][3])})
 
         # define input files for each member
         for mem_i in range(self.params['members']):
@@ -642,9 +647,10 @@ class PDI(Study):
 
         for mem_i in range(self.params['members']):
             energies_log = LmpLog(self.state['defective'][mem_i]['dir']/'energies.log')
+            energies = energies_log.data_df['PotEng'].to_numpy()
 
-            e_pris[mem_i] = energies_log.data_df['PotEng'][0]
-            e_def[mem_i] = energies_log.data_df['PotEng'][-1]
+            e_pris[mem_i] = energies[0]
+            e_def[mem_i] = energies[-1]
 
         self.data.update({'e_pris': e_pris, 'e_def': e_def, 'e_ins': e_def-e_pris})
 
@@ -682,10 +688,10 @@ class PDI(Study):
     def save_data(self):
         # write out pristine and defective energies
         with open(self.dir/'energies.out', 'w') as e:
-            e.write(f"Timesteps: {np.array2string(self.data['timesteps'], max_line_width=1000)}\n\n")
+            e.write(f"{'Member':<10} {'Epris':<15} {'Edef':<15} {'Eins':<15}\n")
 
             for mem_i in range(self.input_yml['members']):
-                e.write(f"{mem_i:<5}  {self.data['e_pris'][mem_i]:<15.4f}  {np.array2string(self.data['e_def'][mem_i], max_line_width=1000)}\n")
+                e.write(f"{mem_i:<10} {self.data['e_pris'][mem_i]:<15.4f} {self.data['e_def'][mem_i]:<15.4f} {self.data['e_ins'][mem_i]:<15.4f}\n")
 
         # compute and plot insertion energy histogram for first and last snapshot
         e_ins_histo, e_ins_bin_edges = np.histogram(self.data['e_ins'], bins=40, density=True)
@@ -697,7 +703,7 @@ class PDI(Study):
         plt.close()
 
 @register_study
-class PointDefectSRO(Study):
+class PointDefectSRO(Study):#
     def init_state(self):
         # setup containers
         self.sim_ids = ['pristine', 'defective']
