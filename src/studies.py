@@ -196,6 +196,7 @@ class Study:
                 # run LAMMPS and save process
                 jobs[sim_i][mem_i] = LmpJob(job_dir/lmp_fn, self.params['processors'])
                 self.state[sim_i][mem_i]['status'] = 1
+                time.sleep(0.5)
 
     def analyze(self):
         """Analyze data from out, log, and dump files specific to the study."""
@@ -236,7 +237,7 @@ class MCMD(Study):
         # neighbors up to 5th shell (cutoffs are half-way between ideal shell radii)
         if self.params['lattice'] == 'bcc':
             self.params['wc_num_neighbors'] = [8, 6, 12, 24, 8]
-            self.params['wc_shell_cutoff'] = [r*self.params['lattice_const'] for r in [0, 0.933, 1.207, 1.536, 1.695, 1.866]]
+            self.params['wc_shell_cutoff'] = [0, 0.933, 1.207, 1.536, 1.695, 1.866]
         else:
             raise ValueError(f"Lattice type {self.params['lattice']} is either unrecognized or unsupported")
 
@@ -364,9 +365,13 @@ class MCMD(Study):
 
             # WC evolution over time for each member
             for snap_i, snapshot in enumerate(mc_dump.frames.values()):
+                # compute lattice constant for adjusting shell radii
+                snap_lat_const = (product(snapshot['boxsize']) / product(self.params['size']))**(1/3)
+                shell_radii = [r*snap_lat_const for r in self.params['wc_shell_cutoff']]
+
                 wc[mem_i, snap_i, :, :, :] = warren_cowley(
                     sum(self.params['wc_num_neighbors'][:self.params['wc_shell']]),
-                    self.params['wc_shell_cutoff'][:self.params['wc_shell']+1],
+                    shell_radii[:self.params['wc_shell']+1],
                     snapshot['position'], 
                     snapshot['type'], 
                     np.array([snapshot['box']['xlo'], snapshot['box']['ylo'], snapshot['box']['zlo']]),

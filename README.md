@@ -53,6 +53,43 @@ snapshot: <number of timesteps between snapshots>
 wc_shell: <number of shells to compute Warren-Cowley parameters for (default: 3, max: 5)>
 ```
 
+### Examples
+
+This example studies the SRO in equiatomic W-Mo using an NPT ensemble.
+
+```yaml
+name: 1000K_random
+type: MCMD
+dir: /storage/group/xvw5285/default/LAMMPS/WMo/
+
+lattice: bcc
+lattice_const: 3.15
+size: [10, 10, 10]
+composition:
+  W: 50
+  Mo: 50
+order: random
+
+pair_style: eam/fs
+potential: WMo.eam.fs
+skin: 2.0
+
+members: 1000
+timestep: 0.005
+temperature: 1000
+ensemble: npt
+Tdamp: 10.0
+Pdamp: 5.0
+processors: 8
+
+minimize: [1.0e-7, 0.0, 10000, 1000000]
+equil: 25k
+mc: [50, 5, 20k]
+snapshot: 1k
+
+wc_shell: 5
+```
+
 ## `PDI`
 
 __Scope:__ cubic concentrated alloys
@@ -96,12 +133,37 @@ members: <number of independent simulations>
 defect: <vac, int>
 int_type: <crowd, db; type of interstitial structure>
 int_species: <element name of interstitial>
-int_orientation: <crystal direction indices as a list (e.g., [1, 1, 1] is the <111> direction)>
+int_orientation: <crystal direction indices as a string (e.g., 111 is the <111> direction)>
 processors: <number of MPI ranks for each independent simulation to be run in parallel>
 
 minimize: <minimization criteria for final quenching as a list [etol, ftol, maxiter, maxeval]>
 ```
 
+### Examples
+
+This example creates M-V $\langle 111\rangle$ dumbbells (M = W, V) into the final configurations of a previous `MCMD` study. 
+
+```yaml
+name: sro_vac
+type: PDI
+dir: /storage/group/xvw5285/default/LAMMPS/WV/
+
+dataset: /storage/group/xvw5285/default/LAMMPS/WV/1000K_random_000/dataset/
+
+pair_style: eam/fs
+potential: WV.eam.fs
+skin: 2.0
+
+defect: int
+int_type: db
+int_species: V
+int_orientation: 111
+members: 1000
+processors: 4
+
+minimize: [1.0e-7, 0.0, 10000, 1000000]
+```
+
 ## Notes
 
-1. When calculating the Warren-Cowley parameters, the initial lattice constant is used rather than the version containing volume relaxations. If the change in lattice constant is small, then this note can be safely ignored, otherwise the wrong amount of neighbors will be counted for each shell. In bcc systems, the distances corresponding to the middle of the gap between nearest neighbor shells are $a_0\times[0, 0.933, 1.207, 1.536, 1.695, 1.866]$. Since the smallest gap is $0.159a_0$, the limit is when $\Delta a_0 < 0.159a_0$. For $a_0\approx 3.075\,\AA$, this is $\Delta a_0 = 0.488\,\AA$. A good initial lattice constant usually results relaxations on the order $\pm0.01-0.1 \AA$, which is far below the limit.
+1. When restarting a simulation, the new input parameters are used even if they conflict with the previous ones. Care must be taken to avoid potential conflicts by only changing parameters delibrately. For example, if one ran a study with 25 members then restarted with 12, only those first 12 members will be included in the analysis. Also keep in mind that simulation results are only updated if the member ID is not included in the restart file.
