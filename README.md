@@ -100,7 +100,6 @@ int_orientation: <crystal direction indices as a list (e.g., [1, 1, 1] is the <1
 processors: <number of MPI ranks for each independent simulation to be run in parallel>
 
 minimize: <minimization criteria for final quenching as a list [etol, ftol, maxiter, maxeval]>
-max_shell: <number of shells to compute neighbor composition for (default: 3, max: 5)>
 ```
 
 ## Notes

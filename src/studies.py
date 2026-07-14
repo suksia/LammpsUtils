@@ -572,16 +572,6 @@ class PDI(Study):
             'maxiter': unprefix(self.input_yml['minimize'][2]),
             'maxeval': unprefix(self.input_yml['minimize'][3])})
 
-        # neighbors up to 5th shell (cutoffs are half-way between ideal shell radii)
-        if self.params['lattice'] == 'bcc':
-            self.params['num_neighbors'] = [8, 6, 12, 24, 8]
-            self.params['shell_cutoff'] = [r*self.params['lattice_const'] for r in [0, 0.933, 1.207, 1.536, 1.695, 1.866]]
-        else:
-            raise ValueError(f"Lattice type {self.params['lattice']} is either unrecognized or unsupported")
-
-        if 'max_shell' not in self.input_yml.keys():
-            self.params['max_shell'] = 3
-
         # define input files for each member
         for mem_i in range(self.params['members']):
             # main input files for perfect and defective systems
@@ -664,23 +654,6 @@ class PDI(Study):
 
         self.data.update({'e_pris': e_pris, 'e_def': e_def, 'e_ins': e_def-e_pris})
 
-        # compute the composition around the insertion position prior to inserting the defect
-        neigh_comp = np.zeros(((self.params['members']), self.params['max_shell'], len(self.params['species'])))
-        for mem_i in range(self.params['members']):
-            pris_struct: LmpStructure = self.state['pristine'][mem_i]['input_files']['pristine.struct']
-            
-            neigh_comp[mem_i, :, :] = neighbor_composition(
-                sum(self.params['num_neighbors'][:self.params['max_shell']]),
-                self.params['shell_cutoff'][:self.params['max_shell']+1],
-                pris_struct.positions,
-                self.params['def_site_pos'],
-                pris_struct.types,
-                np.array([pris_struct.box['xlo'], pris_struct.box['ylo'], pris_struct.box['zlo']]),
-                pris_struct.boxsize
-            )
-        
-        self.data.update({'neigh_comp': neigh_comp})
-
         # obtain positions of defective cells
         for mem_i in range(self.input_yml['members']):
             pipeline = import_file(self.state['defective'][mem_i]['dir']/'defective.dump')
@@ -727,30 +700,4 @@ class PDI(Study):
         plt.xlabel('Insertion Energy [eV]')
         plt.ylabel('Frequency')
         plt.savefig(self.dir/'insertion_histo.png', bbox_inches="tight")
-        plt.close()
-
-        # write out neighbor composition analysis
-        with open(self.dir/'neighbors.out', 'w') as n:
-            for mem_i in range(self.input_yml['members']):
-                n.write(f"{mem_i}\n")
-                n.write(np.array2string(self.data['neigh_comp'])+'\nn')
-
-        # overlay insertion energy histogram with neighbor composition per shell and species
-        fig, axs = plt.subplots(self.params['max_shell'], len(self.params['species']), sharex=True, sharey=True)
-
-        for shi in range(self.params['max_shell']):
-            for spi in range(len(self.params['species'])):
-                axs[shi, spi].bar(e_ins_bin_edges[:-1], e_ins_histo, linewidth=1, edgecolor='navy', width=np.diff(e_ins_bin_edges))
-                axs[shi, spi].scatter(self.data['e_ins'], self.data['neigh_comp'][:, spi])
-        
-        # columns
-        for spi in range(len(self.params['species'])):
-            axs[-1, spi].set_xlabel('Insertion Energy [eV]')
-            axs[0, spi].set_title(self.params['species'][spi])
-        
-        # rows
-        for shi in range(self.params['max_shell']):
-            axs[shi, 1].set_ylabel('Concentration [at.%]')
-        
-        fig.savefig(self.dir/'neighbors.png', bbox_inches="tight")
         plt.close()
