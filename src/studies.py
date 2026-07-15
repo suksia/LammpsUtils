@@ -379,9 +379,13 @@ class MCMD(Study):
             
             # WC for final frame for each member
             final_frame = list(LmpDump(file_path=self.state['runs'][mem_i]['dir']/'final.dump').frames.values())[0]
+
+            final_lat_const = (product(final_frame['boxsize']) / product(self.params['size']))**(1/3)
+            shell_radii = [r*final_lat_const for r in self.params['wc_shell_cutoff']]
+
             wc_final[mem_i, :, :, :] = warren_cowley(
                 sum(self.params['wc_num_neighbors'][:self.params['wc_shell']]),
-                self.params['wc_shell_cutoff'][:self.params['wc_shell']+1],
+                shell_radii[:self.params['wc_shell']+1],
                 final_frame['position'], 
                 final_frame['type'], 
                 np.array([final_frame['box']['xlo'], final_frame['box']['ylo'], final_frame['box']['zlo']]),
