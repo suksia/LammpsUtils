@@ -215,7 +215,7 @@ minimize: <minimization criteria for initial minimization and quenching as a lis
 equil: <number of equilibration timesteps before cascade>
 cascade: <cascade adaptive timestep criteria as a list [Nsteps, mindt, maxdt, maxdr]
 snapshot: <number of timesteps between snapshots>
-pe_thresh: <potential energy threshold for only saving atoms disrupted strongly by the cascade>
+pe_thresh: <potential energy threshold for each species as a list so that only disrupted atoms are dumped>
 ```
 
 ## Notes

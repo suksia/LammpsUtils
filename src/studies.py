@@ -796,6 +796,12 @@ class SCC(Study):
         else:
             self.params['sizes'] = [self.params['size']]*self.input_yml['members']
 
+        # define line for dumping hot atoms
+        hot_group_line = ''
+        for sp_i in range(1, len(self.params['species'])+1):
+            hot_group_line += f"((type=={sp_i}) && (c_1>{self.params['pe_thresh'][sp_i-1]})) || "
+        self.params['hot_group'] = hot_group_line[:-4]
+
         # initialize containers that can only be defined after structure
         self.params['pka_distances'] = [self.input_yml['pka_dist']]*self.input_yml['members']
         self.params['pka_positions'] = [0]*self.input_yml['members']
@@ -869,6 +875,9 @@ class SCC(Study):
             self.state['runs'][mem_i]['input_files'].update({
                 'config.in': struct,
                 'main.in': main_in})
+
+            for l in main_in.lines:
+                print(l, end='\r') 
 
     def build_directory(self):
         super().build_directory()
