@@ -1,0 +1,74 @@
+units metal
+atom_style atomic
+boundary p p p
+
+include config.in
+
+pair_style ?pair_style?
+pair_coeff * * ?potential? ?elements?
+
+neighbor ?skin? bin
+neigh_modify every 1 delay 0 check yes
+
+# ----- define regions and groups ----- #
+
+variable bath_th equal ?lattice_const?*?bath?
+
+region cascade block \
+    $(xlo+bath_th) $(xhi-bath_th) 
+    $(ylo+bath_th) $(yhi-bath_th) 
+    $(zlo+bath_th) $(zhi-bath_th)
+group cascade region cascade
+
+group bath subtract all cascade
+
+write_dump bath custom bath.dump id type x y z
+
+region pka sphere ?pka_pos? 0.5
+group pka region pka
+
+write_dump pka custom pka.dump id type x y z
+
+# ----- equilibrate ----- #
+
+thermo_style custom step pe
+thermo 1
+
+min_style cg
+minimize ?etol? ?ftol? ?maxiter? ?maxeval?
+
+thermo_style custom step pe press vol temp
+thermo 25
+
+timestep ?timestep?
+
+fix equil all npt temp ?temp? ?temp? ?Tdamp? iso 0.0 0.0 ?Pdamp?
+
+velocity all create ?temp? ?vel_seed?
+
+run ?equil?
+
+unfix equil
+
+write_dump all custom equil.dump id type x y z
+
+# ----- cascade ----- #
+
+reset_timestep 0
+
+thermo_style custom step time dt press temp
+thermo 1
+
+compute 1 all pe/atom
+
+dump 1 all custom ?snapshot? cascade.dump id type x y z c_1
+dump_modify 1 thresh c_1 > ?pe_thresh?
+
+fix nve all nve
+fix bath bath langevin ?temp? ?temp? ?Tdamp? ?lang_seed?
+
+fix adapt_dt all dt/reset 1 ?mindt? ?maxdt? ?maxdr? units box
+
+velocity pka set ?pka_vel?
+
+run ?nsteps?

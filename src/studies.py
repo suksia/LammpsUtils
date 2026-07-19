@@ -1,5 +1,5 @@
 import logging, random, math, os, time, subprocess
-from copy import copy, deepcopy
+from copy import deepcopy
 from pathlib import Path
 from lammps_file import *
 from utils import *
@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from ovito.modifiers import WignerSeitzAnalysisModifier
 from ovito.io import import_file, export_file
+
 
 logger = logging.getLogger('LammpsUtils')
 logging.getLogger("matplotlib").setLevel(logging.FATAL)
@@ -64,6 +65,31 @@ class Study:
     def init_state(self):
         """Populates a state dictionary with simulation parameters and input files for running LAMMPS."""
         pass
+
+    def load_configs(self):
+        """Loads LAMMPS data files (i.e., structures) from a dataset."""
+        if 'dataset' not in self.input_yml.keys():
+            raise KeyError('Dataset key not found in input file.')
+
+        dataset_dir = Path(self.input_yml['dataset'])
+        if not dataset_dir.exists():
+            raise ValueError(f'Dataset directory {dataset_dir} does not exist')
+        
+        dataset_configs = [fp for fp in dataset_dir.iterdir() if fp.is_file()]
+
+        # make sure there are enough configurations
+        if self.params['members'] > len(dataset_configs):
+            raise ValueError(f"Number of members ({self.params['members']}) exceeds number of configurations available in dataset ({len(dataset_configs)})")
+        
+        dataset_configs = [dataset_configs[i] for i in random_range(0, len(dataset_configs))]
+
+        # load a config to determine the composition from the comment line
+        struct = LmpStructure(file_path=dataset_configs[0])
+        self.params['composition'] = struct.composition
+        self.params['lattice'] = struct.lattice
+        self.params['lattice_const'] = struct.lattice_const
+
+        return dataset_configs
 
     def build_directory(self):
         """Loads a restart file if present, otherwise a new full study directory is created."""
@@ -220,6 +246,7 @@ class MCMD(Study):
         
         # update params common to all members/configurations
         self.params.update({
+            'size': [self.input_yml['size']]*3,
             'species': list(self.input_yml['composition'].keys()),
             'elements': tilps(list(self.input_yml['composition'].keys())),
             'temp': self.input_yml['temperature'],
@@ -552,30 +579,14 @@ class PDI(Study):
         mem_dict = {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}
         self.state.update({sim_i: deepcopy(mem_dict) for sim_i in self.sim_ids})
         
-        # randomly choose configurations
-        if 'dataset' in self.input_yml.keys():
-            dataset_dir = Path(self.input_yml['dataset'])
-            if not dataset_dir.exists():
-                raise ValueError(f'Dataset directory {dataset_dir} does not exist')
-            
-            dataset_configs = [fp for fp in dataset_dir.iterdir() if fp.is_file()]
-
-            # make sure there are enough configurations
-            if self.params['members'] > len(dataset_configs):
-                raise ValueError(f"Number of members ({self.params['members']}) exceeds number of configurations available in dataset ({len(dataset_configs)})")
-            
-            dataset_configs = [dataset_configs[i] for i in random_range(0, len(dataset_configs))]
-
-            # load a config to determine the composition from the comment line
-            pris_struct = LmpStructure(file_path=dataset_configs[0])
-            composition = pris_struct.composition
-        else:
-            composition = self.input_yml['composition']
+        # load configs from a dataset and determine composition from some config file (saved in self.params)
+        dataset_configs = self.load_configs()
         
         # update params common to all members/configurations
         self.params.update({
-            'species': list(composition.keys()),
-            'elements': tilps(list(composition.keys())),
+            'size': [self.input_yml['size']]*3,
+            'species': list(self.params['composition'].keys()),
+            'elements': tilps(list(self.params['composition'].keys())),
             'etol': f"{self.input_yml['minimize'][0]:.2e}",
             'ftol': f"{self.input_yml['minimize'][1]:.2e}",
             'maxiter': unprefix(self.input_yml['minimize'][2]),
@@ -710,3 +721,163 @@ class PDI(Study):
         plt.ylabel('Frequency')
         plt.savefig(self.dir/'insertion_histo.png', bbox_inches="tight")
         plt.close()
+
+@register_study
+class SCC(Study):
+    def init_state(self):
+        self.sim_ids = ['runs']
+        self.state.update({'runs': {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}})
+
+        # load configs from a dataset and determine composition from some config file (saved in self.params)
+        if 'dataset' in self.input_yml.keys():
+            dataset_configs_fps = self.load_configs()
+
+        # update params common to all members/configurations
+        self.params.update({
+            'species': list(self.params['composition'].keys()),
+            'elements': tilps(list(self.params['composition'].keys())),
+            'temp': self.input_yml['temperature'],
+            'etol': f"{self.input_yml['minimize'][0]:.2e}",
+            'ftol': f"{self.input_yml['minimize'][1]:.2e}",
+            'maxiter': unprefix(self.input_yml['minimize'][2]),
+            'maxeval': unprefix(self.input_yml['minimize'][3]),
+            'nsteps': unprefix(self.input_yml['cascade'][0]),
+            'mindt': self.input_yml['cascade'][1],
+            'maxdt': self.input_yml['cascade'][2],
+            'maxdr': self.input_yml['cascade'][3]})
+        
+        if 'size' not in self.input_yml.keys():
+            if 'box_sf' not in self.input_yml.keys():
+                raise KeyError('Box scaling factor (at/keV) required if size is not specified')
+        
+        if 'box_sf' in self.input_yml.keys():
+            self.params['box_sf'] = unprefix(self.input_yml['box_sf'])
+        else:
+            self.params['box_sf'] = 25000 # default
+        
+        # randomly sample PKA types following composition (if not provided)
+        if 'pka_type' not in self.input_yml.keys():
+            pka_types = []
+            for sp, conc in self.params['composition'].items():
+                pka_types += [sp]*round(self.input_yml['members']*conc/100)
+
+            rng = np.random.default_rng()
+            pka_types = rng.permutation(np.array(pka_types)).tolist()
+
+            # add or remove random types uniformly until at the right amount
+            diff = len(pka_types) - self.input_yml['members']
+            if diff > 0:
+                pka_types.pop(random.randint(0, len(pka_types)-1))
+            elif diff < 0:
+                pka_types += [self.params['species'][random.randint(0, len(self.params['species'])-1)]]
+            
+            self.params['pka_types'] = pka_types
+        else:
+            if self.input_yml['pka_type'] not in self.params['composition'].keys():
+                    raise ValueError(f"PKA type {self.input_yml['pka_type']} not part of the composition.")
+            
+            self.params['pka_types'] = [self.params['pka_type']]*self.input_yml['members']
+
+        # compute PKA energies (from neutron MeV to PKA keV) and size of lattice for each species
+        self.params.update({'pka_energies': {}, 'req_size': {}})
+        for sp in self.params['species']:
+            pka_mass = masses[sp]
+            self.params['pka_energies'][sp] = 4*pka_mass / (1+pka_mass)**2 * self.input_yml['neutron'] * 1000
+            
+            req_num_atoms = math.ceil(self.params['box_sf']*self.params['pka_energies'][sp])
+            if self.params['lattice'] == 'bcc':
+                self.params['req_size'][sp] = math.ceil((req_num_atoms / 2)**(1/3))
+
+            elif self.params['lattice'] == 'fcc':
+                self.params['req_size'][sp] = math.ceil((req_num_atoms / 4)**(1/3))
+
+        if 'size' not in self.input_yml.keys():
+            self.params['sizes'] = [[self.params['req_size'][self.params['pka_types'][mem_i]]]*3 for mem_i in range(self.input_yml['members'])]
+        else:
+            self.params['sizes'] = [self.params['size']]*self.input_yml['members']
+
+        # initialize containers that can only be defined after structure
+        self.params['pka_distances'] = [self.input_yml['pka_dist']]*self.input_yml['members']
+        self.params['pka_positions'] = [0]*self.input_yml['members']
+        self.params['pka_directions'] = [0]*self.input_yml['members']
+        self.params['pka_velocities'] = [0]*self.input_yml['members']
+
+        # define RNG seeds for velocity initialization and Langevin thermostat
+        seeds = create_seeds(2*self.params['members'])
+
+        # create input files
+        for mem_i in range(self.input_yml['members']):
+            # either load a configuration and replicate it to get SRO right (approximation) or make a full one from scratch
+            if 'dataset' in self.input_yml.keys():
+                struct = LmpStructure(file_path=dataset_configs_fps[mem_i])
+                struct = struct.replicate(self.params['sizes'][mem_i]) 
+
+                # number of replications rarely is truly an integer, so size probably changed
+                self.params['sizes'][mem_i] = struct.size
+
+            else:
+                self.params['size'] = self.params['sizes'][mem_i]
+                struct = LmpStructure(lattice_params=self.params)
+
+            # compute PKA distance as percentage of distance to boundary
+            self.params['pka_distances'][mem_i] *= self.params['lattice_const']*self.params['size'][0]/2
+
+            # filter positions by distance
+            center = np.array([struct.boxsize[0] + struct.box['xlo'], struct.boxsize[1] + struct.box['ylo'], struct.boxsize[2] + struct.box['zlo']])/2
+            
+            positions = struct.positions - center
+            dist = np.linalg.norm(positions, axis=1)
+            
+            dist_low = self.params['pka_distances'][mem_i] - self.params['lattice_const']
+            dist_high = self.params['pka_distances'][mem_i] + self.params['lattice_const']
+
+            dist_mask = (dist > dist_low) & (dist < dist_high)
+            dist_positions = struct.positions[dist_mask]
+            dist_types = struct.types[dist_mask]
+
+            # filter again by PKA type 
+            pka_sp = self.params['pka_types'][mem_i]
+            pka_type_mask = dist_types == self.params['species'].index(pka_sp)+1
+            pka_positions = dist_positions[pka_type_mask]
+            pka_types = dist_types[pka_type_mask]
+
+            if len(pka_types) == 0:
+                raise RuntimeError(f"Could not find any {pka_sp} atoms within {dist_low, dist_high} angstroms of the center")
+
+            # get PKA position and directions
+            pka_pos = pka_positions[random.randint(0, len(pka_types)-1)] - center
+            pka_direct = -pka_pos / np.linalg.norm(pka_pos)
+
+            self.params['pka_positions'][mem_i] = pka_pos + center
+            self.params['pka_directions'][mem_i] = np.round(-pka_pos / np.array(self.params['size']), 2)
+
+            # compute PKA velocity (A/ps) now that direction is known
+            pka_vel = 3106.21*pka_direct*(2*self.params['pka_energies'][pka_sp]/masses[pka_sp])**(1/2)
+            self.params['pka_velocities'][mem_i] = np.linalg.norm(pka_vel)
+            
+            # params to set up main input
+            self.params.update({
+                'lang_seed': seeds[mem_i*2],
+                'vel_seed': seeds[mem_i*2+1],
+                'pka_pos': tilps(np.round(self.params['pka_positions'][mem_i], 3).tolist()),
+                'pka_vel': tilps(np.round(pka_vel).tolist())})
+            
+            main_in = LmpInput(file_path=self.templates_dir/'main.in')
+            main_in.add_params(self.params)
+
+            # save input files
+            self.state['runs'][mem_i]['input_files'].update({
+                'config.in': struct,
+                'main.in': main_in})
+
+    def build_directory(self):
+        super().build_directory()
+        self.dir.mkdir(exist_ok=True)
+        
+        runs_dir: Path = self.dir / 'runs'
+        runs_dir.mkdir(exist_ok=True)
+
+        for mem_i in range(self.input_yml['members']):
+            subdir = runs_dir / str(mem_i)
+            subdir.mkdir(exist_ok=True)
+            self.state['runs'][mem_i].update({'dir' : subdir})

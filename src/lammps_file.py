@@ -1,6 +1,6 @@
 import logging, re, random, math
 from pathlib import Path
-from copy import deepcopy
+from copy import copy, deepcopy
 import numpy as np
 from utils import *
 from masses import masses
@@ -146,18 +146,7 @@ class LmpStructure(LmpFile):
             for t in transv:
                 pos.append(p+t)
 
-        # remove duplicate positions
-        upos = [pos[0]]
-        for i, p in enumerate(pos[1:]):
-            i += 1
-            append = True
-            for j, op in enumerate(pos[:i]):
-                if p[0] == op[0] and p[1] == op[1] and p[2] == op[2]:
-                    append = False
-            if append:
-                upos.append(p)
-
-        self.positions = np.array(upos, dtype=np.float32)
+        self.positions = np.array(pos, dtype=np.float32)
         self.num_atoms = len(self.positions)
 
         # ------- decoration ------- #
@@ -172,17 +161,16 @@ class LmpStructure(LmpFile):
 
         random.seed()
         while sum(at_composition.values()) != self.num_atoms:
-            rand_el_idx = random.randint(0, len(self.composition)-1)
+            rng = np.random.default_rng()
+            rand_el_idx = rng.integers(0, len(self.composition)-1)
             el = list(self.composition.keys())[rand_el_idx]
 
             val = sum(at_composition.values()) - self.num_atoms
             at_composition[el] -= sign(val)
 
         # generate a set of indices corresponding to random positions
-        rand_pos_idx = {}
-        while len(rand_pos_idx) < self.num_atoms:
-            rand_pos_idx.update({random.randint(0, self.num_atoms-1): None})
-        rand_pos_idx = list(rand_pos_idx)
+        rng = np.random.default_rng()
+        rand_pos_idx = rng.permutation(self.num_atoms)
 
         # random -> randomly decorate sites with different types
         if params['order'] == 'random':
@@ -366,6 +354,50 @@ class LmpStructure(LmpFile):
         self.renumber_ids()
 
         return self.positions[ref_pos_i]
+
+    def replicate(self, new_size: list[int]):
+        """Replicate the current system to create a larger system."""
+        # initialize a copy which will have new parameters
+        new_struct = deepcopy(self)
+
+        # determine lattice parameters
+        num_repl = [round(new_size[i] / self.size[i]) for i in range(3)]
+        new_struct.size = product(new_size)*product(num_repl)
+
+        if self.lattice == 'bcc':
+            new_struct.num_atoms = 2*product(new_struct.size)
+        elif self.lattice == 'fcc':
+            new_struct.num_atoms = 4*product(new_struct.size)
+
+        new_struct.box = {
+            'xlo': self.box['xlo'],
+            'xhi': self.boxsize[0]*num_repl[0],
+            'ylo': self.box['ylo'],
+            'yhi': self.boxsize[1]*num_repl[1],
+            'zlo': self.box['zlo'],
+            'zhi': self.boxsize[2]*num_repl[2],
+        }
+
+        new_struct.boxsize = np.zeros(3)
+        for i, d in enumerate(['x', 'y', 'z']):
+            new_struct.boxsize[i] = new_struct.box[f'{d}hi']-new_struct.box[f'{d}lo']
+
+        # create a new set of simple cubic translation vectors to translate the entire system by
+        repl_transv = []
+        for i in range(num_repl[0]):
+            for j in range(num_repl[1]):
+                for k in range(num_repl[2]):
+                    repl_transv.append(self.size[0]*self.lattice_const*np.array([i,j,k]))
+
+        new_struct.positions = np.zeros((new_struct.num_atoms, 3), dtype=np.float32)
+        new_struct.types = np.zeros(new_struct.num_atoms, dtype=np.float32)
+        for i, t in enumerate(repl_transv):
+            new_struct.positions[i*self.num_atoms:(i+1)*self.num_atoms, :] = self.positions + t
+            new_struct.types[i*self.num_atoms:(i+1)*self.num_atoms] = self.types
+
+        new_struct.ids = np.arange(1, new_struct.num_atoms+1, dtype=np.int32)
+
+        return new_struct
 
     def renumber_ids(self):
         """Redefine atom IDs to be consecutive."""
