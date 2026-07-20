@@ -2,8 +2,8 @@ import logging, re, random, math
 from pathlib import Path
 from copy import copy, deepcopy
 import numpy as np
-from utils import *
-from masses import masses
+from src.LammpsUtils.utils import *
+from src.LammpsUtils.masses import masses
 import matplotlib.pyplot as plt
 import pandas as pd
 

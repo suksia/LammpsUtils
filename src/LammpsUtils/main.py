@@ -1,6 +1,6 @@
 import argparse, yaml, logging, sys, os, shutil
 from pathlib import Path
-from studies import Study, study_registry
+from src.LammpsUtils.studies import Study, study_registry
 
 # basic logger
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format='[%(asctime)s] %(message)s', datefmt='%H:%M:%S')

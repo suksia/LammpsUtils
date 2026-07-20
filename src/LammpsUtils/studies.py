@@ -1,8 +1,8 @@
 import logging, random, math, os, time, subprocess
 from copy import deepcopy
 from pathlib import Path
-from lammps_file import *
-from utils import *
+from src.LammpsUtils.lammps_file import *
+from src.LammpsUtils.utils import *
 import matplotlib.pyplot as plt
 import numpy as np
 from ovito.modifiers import WignerSeitzAnalysisModifier
