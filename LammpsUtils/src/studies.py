@@ -876,9 +876,6 @@ class SCC(Study):
                 'config.in': struct,
                 'main.in': main_in})
 
-            for l in main_in.lines:
-                print(l, end='\r') 
-
     def build_directory(self):
         super().build_directory()
         self.dir.mkdir(exist_ok=True)
