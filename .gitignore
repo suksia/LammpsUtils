@@ -1,3 +1,5 @@
+potentials/*
+build/
 env/
 test/
 src/LammpsUtils/__pycache__/

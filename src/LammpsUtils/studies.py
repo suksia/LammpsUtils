@@ -887,7 +887,8 @@ class CC(Study):
                 'lang_seed': seeds[mem_i*2],
                 'vel_seed': seeds[mem_i*2+1],
                 'pka_pos': tilps(np.round(self.state_params[0][mem_i]['PKA_position'], 3).tolist()),
-                'pka_vel': tilps(np.round(pka_vel).tolist())})
+                'pka_vel': tilps(np.round(pka_vel).tolist()),
+                'cascade_idx': 0})
             
             first_cascade_in = LmpInput(file_path=self.templates_dir/'first_cascade.in')
             first_cascade_in.add_params(self.params)

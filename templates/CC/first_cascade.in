@@ -88,11 +88,15 @@ write_dump all custom final.dump id type x y z
 
 # ----- quench reference and post-cascade cells ----- #
 
+thermo_style custom step pe press
+thermo 1
+
 read_dump reference.dump 0 id type x y z replace yes
 
 minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
 reset_timestep 0
+run 0
 write_dump all custom quench.dump id type x y z c_1
 
 read_dump final.dump 0 id type x y z replace yes
@@ -100,6 +104,7 @@ read_dump final.dump 0 id type x y z replace yes
 minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
 reset_timestep 1
+run 0
 write_dump all custom quench.dump id type x y z c_1 modify append yes
 
 group pka delete
