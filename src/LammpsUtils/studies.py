@@ -11,7 +11,7 @@ from ovito.io import import_file, export_file
 logger = logging.getLogger('LammpsUtils')
 logging.getLogger("matplotlib").setLevel(logging.FATAL)
 
-PKG_DIR = Path(__file__).parent.parent
+PKG_DIR = Path(__file__).parent.parent.parent
 try:
     NTASKS = int(os.environ['SLURM_NTASKS'])
 except:
@@ -777,13 +777,13 @@ class CC(Study):
         # output computed setup details
         Etrans_debug_line, size_debug_line = 'Computed PKA energy transfer: ', 'Computed minimum system size: '
         for sp in self.params['species']:
-            Etrans_debug_line += f"{sp} = {self.params['pka_energies'][sp]}, "
-            size_debug_line += f"{sp} = {self.params['req_size'][sp]}, "
+            Etrans_debug_line += f"{sp} = {self.params['pka_energies'][sp]:2.3f}, "
+            size_debug_line += f"{sp} = {self.params['req_size'][sp]:2.3f}, "
         
         Etrans_debug_line = Etrans_debug_line[:-2] + ' keV'
         logger.debug(Etrans_debug_line)
 
-        size_debug_line = size_debug_line[:-1] + ' a0'
+        size_debug_line = size_debug_line[:-2]
         logger.debug(size_debug_line)
 
         # define line for dumping hot atoms
@@ -848,7 +848,7 @@ class CC(Study):
                 struct = LmpStructure(lattice_params=self.params)
 
             # compute PKA distance as percentage of distance to boundary
-            self.state_params[0][mem_i]['PKA_distance'] = self.input_yml['pka_dist']*self.params['lattice_const']*self.state_params[0][mem_i]['size']/2
+            self.state_params[0][mem_i]['PKA_distance'] = self.input_yml['pka_dist']*self.params['lattice_const']*self.state_params[0][mem_i]['size'][0]/2
 
             # filter positions by distance
             center = np.array([struct.boxsize[0] + struct.box['xlo'], struct.boxsize[1] + struct.box['ylo'], struct.boxsize[2] + struct.box['zlo']])/2
@@ -909,7 +909,7 @@ class CC(Study):
             subdir = runs_dir / str(mem_i)
             subdir.mkdir(exist_ok=True)
             for casc_i in range(self.input_yml['num_cascades']):
-                self.state[casc_i][mem_i]['input_files'].update({'dir' : subdir})
+                self.state[casc_i][mem_i].update({'dir': subdir})
     
     def run_lammps(self):
         # run first cascade

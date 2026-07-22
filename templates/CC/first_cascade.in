@@ -58,7 +58,6 @@ write_dump all custom reference.dump id type x y z
 
 timestep 0.0001
 
-log cascade_0.log
 thermo_style custom step time dt press temp
 thermo 1
 
@@ -82,10 +81,10 @@ unfix nve
 unfix bath
 unfix adapt_dt
 
-reset_timestep 0
-write_dump all custom final.dump id type x y 
-
 write_restart cascade.restart
+
+reset_timestep 0
+write_dump all custom final.dump id type x y z
 
 # ----- quench reference and post-cascade cells ----- #
 
@@ -102,3 +101,6 @@ minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
 reset_timestep 1
 write_dump all custom quench.dump id type x y z c_1 modify append yes
+
+group pka delete
+group hot delete

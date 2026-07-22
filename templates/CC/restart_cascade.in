@@ -10,8 +10,6 @@ neigh_modify every 1 delay 0 check yes
 
 # ----- define PKA group ----- #
 
-group PKA delete
-
 region pka sphere ?pka_pos? 0.5
 group pka region pka
 
@@ -21,7 +19,6 @@ write_dump pka custom pka_?cascade_idx?.dump id type x y z
 
 timestep 0.0001
 
-log cascade_?cascade_idx?.log
 thermo_style custom step time dt press temp
 thermo 1
 
@@ -46,23 +43,11 @@ unfix nve
 unfix bath
 unfix adapt_dt
 
-reset_timestep 0
-write_dump all custom cascade_?cascade_idx?.dump id type x y z
-
 write_restart cascade.restart
 
-# ----- quench reference and post-cascade cells ----- #
-
-read_dump reference.dump 0 id type x y z replace yes
+# ----- quench post-cascade cells ----- #
 
 minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
-reset_timestep 0
-write_dump all custom quench.dump id type x y z c_1
-
-read_dump final.dump 0 id type x y z replace yes
-
-minimize ?etol? ?ftol? ?maxiter? ?maxeval?
-
-reset_timestep 1
+reset_timestep ?cascade_idx?+1
 write_dump all custom quench.dump id type x y z c_1 modify append yes

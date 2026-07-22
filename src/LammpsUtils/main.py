@@ -7,7 +7,7 @@ logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format='[%(asctime)s
 logger = logging.getLogger('LammpsUtils')
 
 # define environment variable so LAMMPS can find potentials without needing a valid relative path
-PKG_DIR = Path(__file__).parent.parent
+PKG_DIR = Path(__file__).parent.parent.parent
 os.environ['LAMMPS_POTENTIALS'] = (PKG_DIR / 'potentials').as_posix()
 logger.debug(f'Defined LAMMPS_POTENTIALS environment variable')
 
