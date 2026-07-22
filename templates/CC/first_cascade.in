@@ -84,6 +84,7 @@ unfix adapt_dt
 write_restart cascade.restart
 
 reset_timestep 0
+write_dump all custom cascade_?cascade_idx?.dump id type x y z
 write_dump all custom final.dump id type x y z
 
 # ----- quench reference and post-cascade cells ----- #

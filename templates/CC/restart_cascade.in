@@ -45,9 +45,13 @@ unfix adapt_dt
 
 write_restart cascade.restart
 
+reset_timestep 0
+write_dump all custom cascade_?cascade_idx?.dump id type x y z
+
 # ----- quench post-cascade cells ----- #
 
 minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
 reset_timestep ?cascade_idx?+1
+run 0
 write_dump all custom quench.dump id type x y z c_1 modify append yes

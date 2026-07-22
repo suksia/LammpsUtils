@@ -778,7 +778,7 @@ class CC(Study):
         Etrans_debug_line, size_debug_line = 'Computed PKA energy transfer: ', 'Computed minimum system size: '
         for sp in self.params['species']:
             Etrans_debug_line += f"{sp} = {self.params['pka_energies'][sp]:2.3f}, "
-            size_debug_line += f"{sp} = {self.params['req_size'][sp]:2.3f}, "
+            size_debug_line += f"{sp} = {self.params['req_size'][sp]}, "
         
         Etrans_debug_line = Etrans_debug_line[:-2] + ' keV'
         logger.debug(Etrans_debug_line)
@@ -925,16 +925,8 @@ class CC(Study):
             logger.debug(f'Setting up batch {casc_i+1} of cascades')
 
             for mem_i in range(self.input_yml['num_cascades']):
-                # reset status to unfinished
-                self.state[casc_i][mem_i]['status'] = 0
-                
-                # delete previous input files
-                self.state[casc_i][mem_i]['input_files'].pop(f'cascade_{casc_i-1}.in')
-                if 'config.in' in self.state[casc_i][mem_i]['input_files'].keys():
-                    self.state[casc_i][mem_i]['input_files'].pop('config.in')
-
                 # load configuration to determine new PKA position and velocity
-                dump = LmpDump(file_path=f'cascade_{casc_i}.dump')
+                dump = LmpDump(file_path=self.state[casc_i][mem_i]['dir'] / f'cascade_{casc_i}.dump')
                 struct_frame = dump.frames[0]
 
                 # filter positions by distance
@@ -982,6 +974,7 @@ class CC(Study):
                 self.state[casc_i][mem_i]['input_files'].update({
                     f'cascade_{casc_i}.in': next_cascade_in})
             
+            # run cascade
             super().run_lammps([casc_i], f'cascade_{casc_i}.in')
 
     def analyze(self):
