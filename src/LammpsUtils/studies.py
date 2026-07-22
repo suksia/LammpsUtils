@@ -848,7 +848,9 @@ class CC(Study):
                 struct = LmpStructure(lattice_params=self.params)
 
             # compute PKA distance as percentage of distance to boundary
-            self.state_params[0][mem_i]['PKA_distance'] = self.input_yml['pka_dist']*self.params['lattice_const']*self.state_params[0][mem_i]['size'][0]/2
+            for casc_i in range(self.input_yml['num_cascades']):
+                self.state_params[casc_i][mem_i]['size'] = self.state_params[0][mem_i]['size']
+                self.state_params[casc_i][mem_i]['PKA_distance'] = self.input_yml['pka_dist']*self.params['lattice_const']*self.state_params[casc_i][mem_i]['size'][0]/2
 
             # filter positions by distance
             center = np.array([struct.boxsize[0] + struct.box['xlo'], struct.boxsize[1] + struct.box['ylo'], struct.boxsize[2] + struct.box['zlo']])/2
@@ -921,16 +923,16 @@ class CC(Study):
         seeds = create_seeds(self.params['members'])
 
         # setup next cascade
-        for casc_i in range(1, self.input_yml['num_cascades']+1):
+        for casc_i in range(1, self.input_yml['num_cascades']):
             logger.debug(f'Setting up batch {casc_i+1} of cascades')
 
-            for mem_i in range(self.input_yml['num_cascades']):
+            for mem_i in range(self.input_yml['members']):
                 # load configuration to determine new PKA position and velocity
-                dump = LmpDump(file_path=self.state[casc_i][mem_i]['dir'] / f'cascade_{casc_i}.dump')
+                dump = LmpDump(file_path=self.state[casc_i][mem_i]['dir'] / f'cascade_{casc_i-1}.dump')
                 struct_frame = dump.frames[0]
 
                 # filter positions by distance
-                center = np.array([struct_frame['boxsize'][0] + struct_frame['boxsize']['xlo'], struct_frame['boxsize'][1] + struct_frame['boxsize']['ylo'], struct_frame['boxsize'][2] + struct_frame['boxsize']['zlo']])/2
+                center = np.array([struct_frame['boxsize'][0] + struct_frame['box']['xlo'], struct_frame['boxsize'][1] + struct_frame['box']['ylo'], struct_frame['boxsize'][2] + struct_frame['box']['zlo']])/2
                 positions = struct_frame['position'] - center
                 dist = np.linalg.norm(positions, axis=1)
             
@@ -955,7 +957,7 @@ class CC(Study):
                 pka_direct = -pka_pos / np.linalg.norm(pka_pos)
 
                 self.state_params[casc_i][mem_i]['PKA_position'] = pka_pos + center
-                self.state_params[casc_i][mem_i]['PKA_direction'] = np.round(-pka_pos / np.array(self.state_params[0][mem_i]['size']), 2)
+                self.state_params[casc_i][mem_i]['PKA_direction'] = np.round(-pka_pos / np.array(self.state_params[casc_i][mem_i]['size']), 2)
 
                 # compute PKA velocity (A/ps) now that direction is known
                 pka_vel = 3106.21*pka_direct*(2*self.state_params[casc_i][mem_i]['PKA_energy']/masses[pka_sp])**(1/2)

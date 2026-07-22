@@ -65,7 +65,7 @@ compute 1 all pe/atom
 variable hot atom ?hot_group?
 
 group hot dynamic all var hot every ?snapshot?
-dump 1 hot custom ?snapshot? cascade.dump id type x y z
+dump hot hot custom ?snapshot? cascade.dump id type x y z
 
 fix nve all nve
 fix bath bath langevin ?temp? ?temp? ?Tdamp? ?lang_seed?
@@ -76,10 +76,13 @@ velocity pka set ?pka_vel?
 
 run ?nsteps?
 
-undump 1
+undump hot
 unfix nve
 unfix bath
 unfix adapt_dt
+
+group pka delete
+group hot delete
 
 write_restart cascade.restart
 
@@ -107,6 +110,3 @@ minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 reset_timestep 1
 run 0
 write_dump all custom quench.dump id type x y z c_1 modify append yes
-
-group pka delete
-group hot delete
