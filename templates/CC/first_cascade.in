@@ -1,3 +1,5 @@
+# ----- initialization ----- #
+
 units metal
 atom_style atomic
 boundary p p p
@@ -24,7 +26,7 @@ write_dump bath custom bath.dump id type x y z
 region pka sphere ?pka_pos? 0.5
 group pka region pka
 
-write_dump pka custom pka.dump id type x y z
+write_dump pka custom pka_?cascade_idx?.dump id type x y z
 
 # ----- equilibrate ----- #
 
@@ -56,6 +58,7 @@ write_dump all custom reference.dump id type x y z
 
 timestep 0.0001
 
+log cascade_0.log
 thermo_style custom step time dt press temp
 thermo 1
 
@@ -80,7 +83,9 @@ unfix bath
 unfix adapt_dt
 
 reset_timestep 0
-write_dump all custom final.dump id type x y z
+write_dump all custom final.dump id type x y 
+
+write_restart cascade.restart
 
 # ----- quench reference and post-cascade cells ----- #
 
@@ -89,11 +94,11 @@ read_dump reference.dump 0 id type x y z replace yes
 minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
 reset_timestep 0
-write_dump all custom quench.dump id type x y z
+write_dump all custom quench.dump id type x y z c_1
 
 read_dump final.dump 0 id type x y z replace yes
 
 minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
 reset_timestep 1
-write_dump all custom quench.dump id type x y z modify append yes
+write_dump all custom quench.dump id type x y z c_1 modify append yes

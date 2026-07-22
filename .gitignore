@@ -1,5 +1,5 @@
 env/
 test/
-src/__pycache__/
-LammpsUtils.egg-info/
+src/LammpsUtils/__pycache__/
+src/LammpsUtils.egg-info/
 pyproject.toml

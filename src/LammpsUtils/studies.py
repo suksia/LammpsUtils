@@ -1,13 +1,12 @@
 import logging, random, math, os, time, subprocess
 from copy import deepcopy
 from pathlib import Path
-from src.LammpsUtils.lammps_file import *
-from src.LammpsUtils.utils import *
+from LammpsUtils.lammps_file import *
+from LammpsUtils.utils import *
 import matplotlib.pyplot as plt
 import numpy as np
 from ovito.modifiers import WignerSeitzAnalysisModifier
 from ovito.io import import_file, export_file
-
 
 logger = logging.getLogger('LammpsUtils')
 logging.getLogger("matplotlib").setLevel(logging.FATAL)
@@ -56,6 +55,7 @@ class Study:
 
         # containers defined in subclasses
         self.state = {}
+        self.state_params = {}
         self.sim_ids = []
         self.data = {}
 
@@ -723,16 +723,22 @@ class PDI(Study):
         plt.close()
 
 @register_study
-class SCC(Study):
+class CC(Study):
     def init_state(self):
-        self.sim_ids = ['runs']
-        self.state.update({'runs': {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}})
-
+        # setup containers
+        if 'num_cascades' not in self.input_yml.keys():
+            self.input_yml['num_cascades'] = 1
+        
+        for ci in range(self.input_yml['num_cascades']):
+            self.sim_ids.append(ci)
+            self.state.update({ci: {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}})
+            self.state_params.update({ci: {mem_i: {} for mem_i in range(self.params['members'])}})
+        
         # load configs from a dataset and determine composition from some config file (saved in self.params)
         if 'dataset' in self.input_yml.keys():
             dataset_configs_fps = self.load_configs()
 
-        # update params common to all members/configurations
+        # update global params (instantaneous values subject to change) common to all members/configurations
         self.params.update({
             'species': list(self.params['composition'].keys()),
             'elements': tilps(list(self.params['composition'].keys())),
@@ -755,35 +761,12 @@ class SCC(Study):
         else:
             self.params['box_sf'] = 25000 # default
         
-        # randomly sample PKA types following composition (if not provided)
-        if 'pka_type' not in self.input_yml.keys():
-            pka_types = []
-            for sp, conc in self.params['composition'].items():
-                pka_types += [sp]*round(self.input_yml['members']*conc/100)
-
-            rng = np.random.default_rng()
-            pka_types = rng.permutation(np.array(pka_types)).tolist()
-
-            # add or remove random types uniformly until at the right amount
-            diff = len(pka_types) - self.input_yml['members']
-            if diff > 0:
-                pka_types.pop(random.randint(0, len(pka_types)-1))
-            elif diff < 0:
-                pka_types += [self.params['species'][random.randint(0, len(self.params['species'])-1)]]
-            
-            self.params['pka_types'] = pka_types
-        else:
-            if self.input_yml['pka_type'] not in self.params['composition'].keys():
-                    raise ValueError(f"PKA type {self.input_yml['pka_type']} not part of the composition.")
-            
-            self.params['pka_types'] = [self.params['pka_type']]*self.input_yml['members']
-
-        # compute PKA energies (from neutron MeV to PKA keV) and size of lattice for each species
+        # compute PKA energies (from neutron MeV to PKA keV) and size of lattice by species only
         self.params.update({'pka_energies': {}, 'req_size': {}})
         for sp in self.params['species']:
             pka_mass = masses[sp]
             self.params['pka_energies'][sp] = 4*pka_mass / (1+pka_mass)**2 * self.input_yml['neutron'] * 1000
-            
+
             req_num_atoms = math.ceil(self.params['box_sf']*self.params['pka_energies'][sp])
             if self.params['lattice'] == 'bcc':
                 self.params['req_size'][sp] = math.ceil((req_num_atoms / 2)**(1/3))
@@ -791,58 +774,96 @@ class SCC(Study):
             elif self.params['lattice'] == 'fcc':
                 self.params['req_size'][sp] = math.ceil((req_num_atoms / 4)**(1/3))
 
-        if 'size' not in self.input_yml.keys():
-            self.params['sizes'] = [[self.params['req_size'][self.params['pka_types'][mem_i]]]*3 for mem_i in range(self.input_yml['members'])]
-        else:
-            self.params['sizes'] = [self.params['size']]*self.input_yml['members']
+        # output computed setup details
+        Etrans_debug_line, size_debug_line = 'Computed PKA energy transfer: ', 'Computed minimum system size: '
+        for sp in self.params['species']:
+            Etrans_debug_line += f"{sp} = {self.params['pka_energies'][sp]}, "
+            size_debug_line += f"{sp} = {self.params['req_size'][sp]}, "
+        
+        Etrans_debug_line = Etrans_debug_line[:-2] + ' keV'
+        logger.debug(Etrans_debug_line)
+
+        size_debug_line = size_debug_line[:-1] + ' a0'
+        logger.debug(size_debug_line)
 
         # define line for dumping hot atoms
         hot_group_line = ''
-        for sp_i in range(1, len(self.params['species'])+1):
-            hot_group_line += f"((type=={sp_i}) && (c_1>{self.params['pe_thresh'][sp_i-1]})) || "
+        for spi in range(1, len(self.params['species'])+1):
+            hot_group_line += f"((type=={spi}) && (c_1>{self.params['pe_thresh'][spi-1]})) || "
         self.params['hot_group'] = hot_group_line[:-4]
+        
+        # need to sample PKA type (-> energy, size)
+        for casc_i in range(self.input_yml['num_cascades']):
+            # PKA type determined randomly following composition
+            pka_types = []
+            if 'pka_type' not in self.input_yml.keys():
+                for sp, conc in self.params['composition'].items():
+                    pka_types += [sp]*round(self.input_yml['members']*conc/100)
 
-        # initialize containers that can only be defined after structure
-        self.params['pka_distances'] = [self.input_yml['pka_dist']]*self.input_yml['members']
-        self.params['pka_positions'] = [0]*self.input_yml['members']
-        self.params['pka_directions'] = [0]*self.input_yml['members']
-        self.params['pka_velocities'] = [0]*self.input_yml['members']
+                    rng = np.random.default_rng()
+                    pka_types = rng.permutation(np.array(pka_types)).tolist()
 
-        # define RNG seeds for velocity initialization and Langevin thermostat
+                    # add or remove one random type due to rounding errors with composition
+                    diff = len(pka_types) - self.input_yml['members']
+                    if diff > 0:
+                        pka_types.pop(random.randint(0, len(pka_types)-1))
+                    elif diff < 0:
+                        pka_types += [self.params['species'][random.randint(0, len(self.params['species'])-1)]]
+
+            # prescribed PKA type            
+            else:
+                if self.input_yml['pka_type'] not in self.params['composition'].keys():
+                    raise ValueError(f"PKA type {self.input_yml['pka_type']} not part of the composition.")
+                
+                pka_types = [self.params['pka_type']]*self.input_yml['members']
+            
+            # save type and energy
+            for mem_i in range(self.input_yml['members']):
+                pka_type = pka_types[mem_i]
+                self.state_params[casc_i][mem_i]['PKA_type'] = pka_type
+                self.state_params[casc_i][mem_i]['PKA_energy'] = self.params['pka_energies'][pka_type]
+                self.state_params[casc_i][mem_i]['size'] = self.params['req_size'][pka_type]
+
+        # seeds for initializing langevin thermostat and velocities for all members
         seeds = create_seeds(2*self.params['members'])
-
-        # create input files
+            
+        # load starting configuration (first cascade) for each member and sample positions (-> direction, velocity) next. Also save first cascade input files
+        # note: cascades cause a large amount of atom displacements, so the next PKA can only be determined afterwards 
         for mem_i in range(self.input_yml['members']):
+            # determine minimum size as required size for lowest mass species / highest energy PKA
+            size = max([self.state_params[ci][mem_i]['size'] for ci in range(self.input_yml['num_cascades'])])
+            size = [size]*3
+
             # either load a configuration and replicate it to get SRO right (approximation) or make a full one from scratch
             if 'dataset' in self.input_yml.keys():
                 struct = LmpStructure(file_path=dataset_configs_fps[mem_i])
-                struct = struct.replicate(self.params['sizes'][mem_i]) 
+                struct = struct.replicate(size)
 
                 # number of replications rarely is truly an integer, so size probably changed
-                self.params['sizes'][mem_i] = struct.size
+                self.state_params[0][mem_i]['size'] = struct.size
 
             else:
-                self.params['size'] = self.params['sizes'][mem_i]
+                self.params['size'] = size
+                self.state_params[0][mem_i]['size'] = size
                 struct = LmpStructure(lattice_params=self.params)
 
             # compute PKA distance as percentage of distance to boundary
-            self.params['pka_distances'][mem_i] *= self.params['lattice_const']*self.params['size'][0]/2
+            self.state_params[0][mem_i]['PKA_distance'] = self.input_yml['pka_dist']*self.params['lattice_const']*self.state_params[0][mem_i]['size']/2
 
             # filter positions by distance
             center = np.array([struct.boxsize[0] + struct.box['xlo'], struct.boxsize[1] + struct.box['ylo'], struct.boxsize[2] + struct.box['zlo']])/2
-            
             positions = struct.positions - center
             dist = np.linalg.norm(positions, axis=1)
             
-            dist_low = self.params['pka_distances'][mem_i] - self.params['lattice_const']
-            dist_high = self.params['pka_distances'][mem_i] + self.params['lattice_const']
+            dist_low = self.state_params[0][mem_i]['PKA_distance'] - self.params['lattice_const']
+            dist_high = self.state_params[0][mem_i]['PKA_distance'] + self.params['lattice_const']
 
             dist_mask = (dist > dist_low) & (dist < dist_high)
             dist_positions = struct.positions[dist_mask]
             dist_types = struct.types[dist_mask]
 
             # filter again by PKA type 
-            pka_sp = self.params['pka_types'][mem_i]
+            pka_sp = self.state_params[0][mem_i]['PKA_type']
             pka_type_mask = dist_types == self.params['species'].index(pka_sp)+1
             pka_positions = dist_positions[pka_type_mask]
             pka_types = dist_types[pka_type_mask]
@@ -854,36 +875,169 @@ class SCC(Study):
             pka_pos = pka_positions[random.randint(0, len(pka_types)-1)] - center
             pka_direct = -pka_pos / np.linalg.norm(pka_pos)
 
-            self.params['pka_positions'][mem_i] = pka_pos + center
-            self.params['pka_directions'][mem_i] = np.round(-pka_pos / np.array(self.params['size']), 2)
+            self.state_params[0][mem_i]['PKA_position'] = pka_pos + center
+            self.state_params[0][mem_i]['PKA_direction'] = np.round(-pka_pos / np.array(size), 2)
 
             # compute PKA velocity (A/ps) now that direction is known
-            pka_vel = 3106.21*pka_direct*(2*self.params['pka_energies'][pka_sp]/masses[pka_sp])**(1/2)
-            self.params['pka_velocities'][mem_i] = np.linalg.norm(pka_vel)
+            pka_vel = 3106.21*pka_direct*(2*self.state_params[0][mem_i]['PKA_energy']/masses[pka_sp])**(1/2)
+            self.state_params[0][mem_i]['PKA_velocity'] = np.linalg.norm(pka_vel)
             
             # params to set up main input
             self.params.update({
                 'lang_seed': seeds[mem_i*2],
                 'vel_seed': seeds[mem_i*2+1],
-                'pka_pos': tilps(np.round(self.params['pka_positions'][mem_i], 3).tolist()),
+                'pka_pos': tilps(np.round(self.state_params[0][mem_i]['PKA_position'], 3).tolist()),
                 'pka_vel': tilps(np.round(pka_vel).tolist())})
             
-            main_in = LmpInput(file_path=self.templates_dir/'main.in')
-            main_in.add_params(self.params)
+            first_cascade_in = LmpInput(file_path=self.templates_dir/'first_cascade.in')
+            first_cascade_in.add_params(self.params)
 
             # save input files
-            self.state['runs'][mem_i]['input_files'].update({
+            self.state[0][mem_i]['input_files'].update({
                 'config.in': struct,
-                'main.in': main_in})
-
+                'cascade_0.in': first_cascade_in})
+            
     def build_directory(self):
         super().build_directory()
         self.dir.mkdir(exist_ok=True)
         
         runs_dir: Path = self.dir / 'runs'
         runs_dir.mkdir(exist_ok=True)
-
+        
+        # cascades share directory
         for mem_i in range(self.input_yml['members']):
             subdir = runs_dir / str(mem_i)
             subdir.mkdir(exist_ok=True)
-            self.state['runs'][mem_i].update({'dir' : subdir})
+            for casc_i in range(self.input_yml['num_cascades']):
+                self.state[casc_i][mem_i]['input_files'].update({'dir' : subdir})
+    
+    def run_lammps(self):
+        # run first cascade
+        logger.debug(f'Setting up batch 1 of cascades')
+        super().run_lammps([0], 'cascade_0.in')
+
+        # create seeds for redefining Langevin thermostat
+        seeds = create_seeds(self.params['members'])
+
+        # setup next cascade
+        for casc_i in range(1, self.input_yml['num_cascades']+1):
+            logger.debug(f'Setting up batch {casc_i+1} of cascades')
+
+            for mem_i in range(self.input_yml['num_cascades']):
+                # reset status to unfinished
+                self.state[casc_i][mem_i]['status'] = 0
+                
+                # delete previous input files
+                self.state[casc_i][mem_i]['input_files'].pop(f'cascade_{casc_i-1}.in')
+                if 'config.in' in self.state[casc_i][mem_i]['input_files'].keys():
+                    self.state[casc_i][mem_i]['input_files'].pop('config.in')
+
+                # load configuration to determine new PKA position and velocity
+                dump = LmpDump(file_path=f'cascade_{casc_i}.dump')
+                struct_frame = dump.frames[0]
+
+                # filter positions by distance
+                center = np.array([struct_frame['boxsize'][0] + struct_frame['boxsize']['xlo'], struct_frame['boxsize'][1] + struct_frame['boxsize']['ylo'], struct_frame['boxsize'][2] + struct_frame['boxsize']['zlo']])/2
+                positions = struct_frame['position'] - center
+                dist = np.linalg.norm(positions, axis=1)
+            
+                dist_low = self.state_params[casc_i][mem_i]['PKA_distance'] - self.params['lattice_const']
+                dist_high = self.state_params[casc_i][mem_i]['PKA_distance'] + self.params['lattice_const']
+
+                dist_mask = (dist > dist_low) & (dist < dist_high)
+                dist_positions = struct_frame['position'][dist_mask]
+                dist_types = struct_frame['type'][dist_mask]
+
+                # filter again by PKA type 
+                pka_sp = self.state_params[casc_i][mem_i]['PKA_type']
+                pka_type_mask = dist_types == self.params['species'].index(pka_sp)+1
+                pka_positions = dist_positions[pka_type_mask]
+                pka_types = dist_types[pka_type_mask]
+
+                if len(pka_types) == 0:
+                    raise RuntimeError(f"Could not find any {pka_sp} atoms within {dist_low, dist_high} angstroms of the center")
+
+                # get PKA position and directions
+                pka_pos = pka_positions[random.randint(0, len(pka_types)-1)] - center
+                pka_direct = -pka_pos / np.linalg.norm(pka_pos)
+
+                self.state_params[casc_i][mem_i]['PKA_position'] = pka_pos + center
+                self.state_params[casc_i][mem_i]['PKA_direction'] = np.round(-pka_pos / np.array(self.state_params[0][mem_i]['size']), 2)
+
+                # compute PKA velocity (A/ps) now that direction is known
+                pka_vel = 3106.21*pka_direct*(2*self.state_params[casc_i][mem_i]['PKA_energy']/masses[pka_sp])**(1/2)
+                self.state_params[casc_i][mem_i]['PKA_velocity'] = np.linalg.norm(pka_vel)
+
+                self.params.update({
+                    'cascade_idx': casc_i,
+                    'lang_seed': seeds[mem_i],
+                    'pka_pos': tilps(np.round(self.state_params[casc_i][mem_i]['PKA_position'], 3).tolist()),
+                    'pka_vel': tilps(np.round(pka_vel).tolist())})
+
+                next_cascade_in = LmpInput(file_path=self.templates_dir/'restart_cascade.in')
+                next_cascade_in.add_params(self.params)
+
+                # save input files
+                self.state[casc_i][mem_i]['input_files'].update({
+                    f'cascade_{casc_i}.in': next_cascade_in})
+            
+            super().run_lammps([casc_i], f'cascade_{casc_i}.in')
+
+    def analyze(self):
+        return
+        # determine defect data
+        self.data['num_fps'] = np.zeros(self.input_yml['num_cascades'], self.input_yml['members'])
+        
+        for casc_i in range(self.input_yml['members']):
+            for mem_i in range(self.input_yml['members']):
+                pipeline = import_file(self.params[casc_i][mem_i]['dir'] / 'quench.dump')
+                ws = WignerSeitzAnalysisModifier(per_type_occupancies=True)
+                pipeline.modifiers.append(ws)
+
+                # custom modifier to obtain WS site properties
+                def modify(frame, data):
+                    # per-site occupancy
+                    occupancies = data.particles['Occupancy']
+                    selection = np.sum(occupancies, axis=1) > 1
+
+                    # add a boolean "Selection" property for interstitial sites
+                    data.particles_.create_property('Selection', data=selection)
+                    
+                    # add data attributes for analysis
+                    data.attributes['Position'] = data.particles.positions[selection]
+                    data.attributes['Occupancy.1'] = data.particles['Occupancy.1'][selection]
+                    data.attributes['Occupancy.2'] = data.particles['Occupancy.2'][selection]
+                
+                # execute pipeline
+                pipeline.modifiers.append(modify)
+                pipeline.compute()
+
+                # get defect count, interstitial position, and interstitial occupancies
+                frame = [frame for frame in pipeline.frames][-1]
+                for i in range(len(frame.attributes['Position'])-1):
+                    self.data['int_pos'][mem_i, :] = frame.attributes['Position'][i]
+
+                    for spi in range(len(self.params['species'])):
+                        self.data['int_occ'][mem_i, spi] = frame.attributes[f'Occupancy.{spi}'][i]
+
+        # do statistics
+        self.data['num_fps_mean'], self.data['num_fps_std'] = np.mean(self.data['num_fps']), np.std(self.data['num_fps'])
+
+    def save_data(self):
+        return
+        # write out interstitial properties
+        header = f"{'x':<10} {'y':<10} {'z':<10}"
+        for sp in self.params['species']:
+            header += f'Num_{sp:<6}'
+    
+        for mem_i in range(self.input_yml['members']):
+            with open('interstitials.txt', 'w') as int_file:
+                int_file.write(f"Total # of interstitials: {self.data['num_fps'][mem_i]}\n")
+                int_file.write(header + '\n')
+
+                x, y, z = self.data['int_pos'][mem_i].tolist()
+                int_file.write(f"{x:<10.5} {y:<10.5} {z:<10.5}")
+
+                for spi in range(len(self.params['species'])):
+                    int_file.write(f"{self.data['int_occ'][mem_i, spi]:<10}")
+                int_file.write('\n')
