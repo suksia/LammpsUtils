@@ -980,60 +980,101 @@ class CC(Study):
             super().run_lammps([casc_i], f'cascade_{casc_i}.in')
 
     def analyze(self):
-        return
-        # determine defect data
-        self.data['num_fps'] = np.zeros(self.input_yml['num_cascades'], self.input_yml['members'])
-        
-        for casc_i in range(self.input_yml['members']):
-            for mem_i in range(self.input_yml['members']):
-                pipeline = import_file(self.params[casc_i][mem_i]['dir'] / 'quench.dump')
-                ws = WignerSeitzAnalysisModifier(per_type_occupancies=True)
-                pipeline.modifiers.append(ws)
+        # determine number Frenkel pairs and the types of atoms in the interstitial cells
+        self.data['num_vac'] = np.zeros(self.input_yml['num_cascades'], self.input_yml['members'])
+        self.data['num_int'] = np.zeros(self.input_yml['num_cascades'], self.input_yml['members'])
+        self.data['occupancy'] = np.zeros(self.input_yml['num_cascades'], self.input_yml['members'], len(self.params['species']))
 
-                # custom modifier to obtain WS site properties
-                def modify(frame, data):
-                    # per-site occupancy
-                    occupancies = data.particles['Occupancy']
-                    selection = np.sum(occupancies, axis=1) > 1
+        for mem_i in range(self.input_yml['members']):
+            pipeline = import_file(self.params[casc_i][mem_i]['dir'] / 'quench.dump')
+            ws = WignerSeitzAnalysisModifier(per_type_occupancies=True)
+            pipeline.modifiers.append(ws)
 
-                    # add a boolean "Selection" property for interstitial sites
-                    data.particles_.create_property('Selection', data=selection)
-                    
-                    # add data attributes for analysis
-                    data.attributes['Position'] = data.particles.positions[selection]
-                    data.attributes['Occupancy.1'] = data.particles['Occupancy.1'][selection]
-                    data.attributes['Occupancy.2'] = data.particles['Occupancy.2'][selection]
+            # custom modifier to obtain WS site properties
+            def modify(frame, data):
+                # per-site occupancy
+                occupancies = data.particles['Occupancy']
+                selection = np.sum(occupancies, axis=1) > 1
+
+                # add a boolean "Selection" property for interstitial sites
+                data.particles_.create_property('Selection', data=selection)
                 
-                # execute pipeline
-                pipeline.modifiers.append(modify)
-                pipeline.compute()
+                # add data attributes for analysis
+                data.attributes['Position'] = data.particles.positions[selection]
+                for spi in range(len(self.params['species'])):
+                    data.attributes[f'Occupancy.{spi}'] = data.particles[f'Occupancy.{spi}'][selection]
+            
+            # execute pipeline
+            pipeline.modifiers.append(modify)
+            pipeline.compute()
 
-                # get defect count, interstitial position, and interstitial occupancies
-                frame = [frame for frame in pipeline.frames][-1]
-                for i in range(len(frame.attributes['Position'])-1):
-                    self.data['int_pos'][mem_i, :] = frame.attributes['Position'][i]
+            frames = [frame for frame in pipeline.frames][1:]
+            for casc_i in range(self.input_yml['num_cascades']):
+                frame = frames[casc_i]
+                self.data['num_vac'][casc_i, mem_i] = frame.attributes['WignerSeitz.vacancy_count']
+                self.data['num_int'][casc_i, mem_i] = frame.attributes['WignerSeitz.interstitial_count']
 
+                # sum per-type interstitial occupancies
+                occ = [0]*len(self.params['species'])
+                for int_i in range(len(frame.attributes['Position'])-1):
                     for spi in range(len(self.params['species'])):
-                        self.data['int_occ'][mem_i, spi] = frame.attributes[f'Occupancy.{spi}'][i]
+                        occ[spi] += frame.attributes[f'Occupancy.{spi+1}'][int_i]
+                
+                self.data['occupancy'][casc_i, mem_i, :] = np.array(occ)
 
-        # do statistics
-        self.data['num_fps_mean'], self.data['num_fps_std'] = np.mean(self.data['num_fps']), np.std(self.data['num_fps'])
+        # compute statistics
+        self.data['num_vac_mean'], self.data['num_vac_std'] = np.mean(self.data['num_vac'], axis=1), np.std(self.data['num_vac'], axis=1)
+        self.data['num_int_mean'], self.data['num_int_std'] = np.mean(self.data['num_int'], axis=1), np.std(self.data['num_int'], axis=1)
+        self.data['occupancy_mean'], self.data['occupancy_std'] = np.mean(self.data['occupancy'], axis=1), np.std(self.data['occupancy'], axis=1)
 
     def save_data(self):
-        return
-        # write out interstitial properties
-        header = f"{'x':<10} {'y':<10} {'z':<10}"
-        for sp in self.params['species']:
-            header += f'Num_{sp:<6}'
-    
-        for mem_i in range(self.input_yml['members']):
-            with open('interstitials.txt', 'w') as int_file:
-                int_file.write(f"Total # of interstitials: {self.data['num_fps'][mem_i]}\n")
-                int_file.write(header + '\n')
+        # write out defect data
+        with open(self.dir / 'defects.out', 'w') as df:
+            sp_line = ''
+            for sp in self.params['species']:
+                sp_line += f'{sp:4} '
 
-                x, y, z = self.data['int_pos'][mem_i].tolist()
-                int_file.write(f"{x:<10.5} {y:<10.5} {z:<10.5}")
+            for mem_i in range(self.input_yml['members']):
+                df.write(f'Member: {mem_i}\n\n')
+                df.write(f'   {'vac':4} {'int':4} {sp_line}')
 
+                for casc_i in range(self.input_yml['num_cascades']):
+                    df.write(f'{casc_i:2} {self.data['num_vac'][casc_i, mem_i]:4} {self.data['num_int'][casc_i, mem_i]:4} ')
+                    for spi in range(len(self.params['species'])):
+                        df.write(f'{self.data['occupancy'][casc_i, mem_i, spi]:4} ')
+                    df.write('\n')
+                
+                df.write('\n\n')
+
+            sp_line = ''
+            for sp in self.params['species']:
+                sp_line += f'{sp:8} '
+
+            df.write('Statistics\n\n')
+            df.write(f'   {'vac':8} {'int':8} {sp_line}')
+            for casc_i in range(self.input_yml['num_cascades']):
+                df.write(f'{casc_i:2} {self.data['num_vac_mean'][casc_i]:4} {self.data['num_vac_std'][casc_i]:4.2f} {self.data['num_int'][casc_i]:4} {self.data['num_int_std'][casc_i]:4.2f} ')
                 for spi in range(len(self.params['species'])):
-                    int_file.write(f"{self.data['int_occ'][mem_i, spi]:<10}")
-                int_file.write('\n')
+                    df.write(f'{self.data['occupancy_mean'][casc_i, spi]:4} {self.data['occupancy_std'][casc_i, spi]:4.2f}')
+                df.write('\n')
+
+        # plot number of vacancies and interstitials as a function of the number of cascades
+        fig, axs = plt.subplots(1, 2, figsize=(10,10))
+        axs: list[plt.Axes] = axs
+
+        # vacancies
+        x = [ci+1 for ci in range(self.input_yml['num_cascades'])]
+        y = self.data['num_vac_mean']
+        yerr = (y - self.data['num_vac_std'], y + self.data['num_vac_std'])
+        axs[0].plot(x, y)
+        axs[0].fill_between(x, yerr[0], yerr[1], alpha=0.5)
+        axs[0].set_xlabel('Number of Cascades')
+        axs[0].set_ylabel('Number of Vacancies')
+
+        # interstitials
+        y = self.data['num_int_mean']
+        yerr = (y - self.data['num_int_std'], y + self.data['num_int_std'])
+        axs[1].plot(x, y)
+        axs[1].fill_between(x, yerr[0], yerr[1], alpha=0.5)
+        axs[1].set_xlabel('Number of Cascades')
+        axs[1].set_ylabel('Number of Interstitials')
