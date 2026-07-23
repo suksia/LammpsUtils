@@ -203,8 +203,8 @@ class Study:
                 sim_i, mem_i = check_status(0, return_next=True)
                 
                 if self.restart:
-                    if sim_i in self.restart.keys():
-                        if mem_i in self.restart[sim_i]:
+                    if str(sim_i) in self.restart.keys():
+                        if mem_i in self.restart[str(sim_i)]:
                             self.state[sim_i][mem_i]['status'] = 2
 
                             with open(self.dir / 'LammpsUtils.restart', 'a') as f:
@@ -760,6 +760,17 @@ class CC(Study):
             self.params['box_sf'] = unprefix(self.input_yml['box_sf'])
         else:
             self.params['box_sf'] = 25000 # default
+
+        if 'wc_shell' not in self.input_yml.keys():
+            self.params['wc_shell'] = 3
+
+        # neighbors up to 5th shell (cutoffs are half-way between ideal shell radii)
+        if self.params['lattice'] == 'bcc':
+            self.params['wc_num_neighbors'] = [8, 6, 12, 24, 8]
+            self.params['wc_shell_cutoff'] = [0, 0.933, 1.207, 1.536, 1.695, 1.866]
+
+        if 'order' not in self.input_yml.keys():
+            self.params['order'] = 'random'
         
         # compute PKA energies (from neutron MeV to PKA keV) and size of lattice by species only
         self.params.update({'pka_energies': {}, 'req_size': {}})
@@ -928,7 +939,7 @@ class CC(Study):
 
             for mem_i in range(self.input_yml['members']):
                 # load configuration to determine new PKA position and velocity
-                dump = LmpDump(file_path=self.state[casc_i][mem_i]['dir'] / f'cascade_{casc_i-1}.dump')
+                dump = LmpDump(file_path=self.state[0][mem_i]['dir'] / f'cascade_{casc_i-1}.dump')
                 struct_frame = dump.frames[0]
 
                 # filter positions by distance
@@ -981,12 +992,12 @@ class CC(Study):
 
     def analyze(self):
         # determine number Frenkel pairs and the types of atoms in the interstitial cells
-        self.data['num_vac'] = np.zeros(self.input_yml['num_cascades'], self.input_yml['members'])
-        self.data['num_int'] = np.zeros(self.input_yml['num_cascades'], self.input_yml['members'])
-        self.data['occupancy'] = np.zeros(self.input_yml['num_cascades'], self.input_yml['members'], len(self.params['species']))
+        self.data['num_vac'] = np.zeros((self.input_yml['num_cascades'], self.input_yml['members']))
+        self.data['num_int'] = np.zeros((self.input_yml['num_cascades'], self.input_yml['members']))
+        self.data['occupancy'] = np.zeros((self.input_yml['num_cascades'], self.input_yml['members'], len(self.params['species'])))
 
         for mem_i in range(self.input_yml['members']):
-            pipeline = import_file(self.params[casc_i][mem_i]['dir'] / 'quench.dump')
+            pipeline = import_file(self.state[0][mem_i]['dir'] / 'quench.dump')
             ws = WignerSeitzAnalysisModifier(per_type_occupancies=True)
             pipeline.modifiers.append(ws)
 
@@ -1001,7 +1012,7 @@ class CC(Study):
                 
                 # add data attributes for analysis
                 data.attributes['Position'] = data.particles.positions[selection]
-                for spi in range(len(self.params['species'])):
+                for spi in range(1, len(self.params['species'])+1):
                     data.attributes[f'Occupancy.{spi}'] = data.particles[f'Occupancy.{spi}'][selection]
             
             # execute pipeline
@@ -1027,54 +1038,140 @@ class CC(Study):
         self.data['num_int_mean'], self.data['num_int_std'] = np.mean(self.data['num_int'], axis=1), np.std(self.data['num_int'], axis=1)
         self.data['occupancy_mean'], self.data['occupancy_std'] = np.mean(self.data['occupancy'], axis=1), np.std(self.data['occupancy'], axis=1)
 
+        # analyze Warren-Cowley parameters for quenched cells
+        self.data['wc'] = np.zeros((self.input_yml['num_cascades'], self.input_yml['members'], self.params['wc_shell'], len(self.params['species']), len(self.params['species'])))
+        
+        for mem_i in range(self.params['members']):
+            casc_dump = LmpDump(file_path=self.state[0][mem_i]['dir'] / 'quench.dump')
+
+            # WC evolution by cascade for each member
+            for snapshot in casc_dump.frames.values():
+                # compute lattice constant for adjusting shell radii
+                snap_lat_const = (product(snapshot['boxsize']) / product(self.params['size']))**(1/3)
+                shell_radii = [r*snap_lat_const for r in self.params['wc_shell_cutoff']]
+
+                self.data['wc'][casc_i, mem_i, :, :, :] = warren_cowley(
+                    sum(self.params['wc_num_neighbors'][:self.params['wc_shell']]),
+                    shell_radii[:self.params['wc_shell']+1],
+                    snapshot['position'], 
+                    snapshot['type'], 
+                    np.array([snapshot['box']['xlo'], snapshot['box']['ylo'], snapshot['box']['zlo']]),
+                    snapshot['boxsize'])
+        
+        self.data['wc_mean'] = np.mean(self.data['wc'], axis=1)
+        self.data['wc_std'] = np.std(self.data['wc'], axis=1)
+
     def save_data(self):
         # write out defect data
         with open(self.dir / 'defects.out', 'w') as df:
             sp_line = ''
             for sp in self.params['species']:
-                sp_line += f'{sp:4} '
+                sp_line += f'{sp:<8} '
 
             for mem_i in range(self.input_yml['members']):
-                df.write(f'Member: {mem_i}\n\n')
-                df.write(f'   {'vac':4} {'int':4} {sp_line}')
+                df.write(f"Member: {mem_i}\n\n")
+                df.write(f"       {'vac':<8} {'int':<8} {sp_line}\n")
 
                 for casc_i in range(self.input_yml['num_cascades']):
-                    df.write(f'{casc_i:2} {self.data['num_vac'][casc_i, mem_i]:4} {self.data['num_int'][casc_i, mem_i]:4} ')
+                    df.write(f"       {casc_i+1:<6} {self.data['num_vac'][casc_i, mem_i]:<8} {self.data['num_int'][casc_i, mem_i]:<8} ")
                     for spi in range(len(self.params['species'])):
-                        df.write(f'{self.data['occupancy'][casc_i, mem_i, spi]:4} ')
+                        df.write(f"{self.data['occupancy'][casc_i, mem_i, spi]:<8} ")
                     df.write('\n')
                 
                 df.write('\n\n')
 
             sp_line = ''
             for sp in self.params['species']:
-                sp_line += f'{sp:8} '
+                sp_line += f'{sp:<16} '
 
             df.write('Statistics\n\n')
-            df.write(f'   {'vac':8} {'int':8} {sp_line}')
+            df.write(f"       {'vac':<16} {'int':<16} {sp_line}")
             for casc_i in range(self.input_yml['num_cascades']):
-                df.write(f'{casc_i:2} {self.data['num_vac_mean'][casc_i]:4} {self.data['num_vac_std'][casc_i]:4.2f} {self.data['num_int'][casc_i]:4} {self.data['num_int_std'][casc_i]:4.2f} ')
+                df.write(f"{casc_i+1:<6} {self.data['num_vac_mean'][casc_i]:<8.2f} {self.data['num_vac_std'][casc_i]:<8.2f} {self.data['num_int_mean'][casc_i]:<8.2f} {self.data['num_int_std'][casc_i]:<8.2f} ")
                 for spi in range(len(self.params['species'])):
-                    df.write(f'{self.data['occupancy_mean'][casc_i, spi]:4} {self.data['occupancy_std'][casc_i, spi]:4.2f}')
+                    df.write(f"{self.data['occupancy_mean'][casc_i, spi]:<8.2f} {self.data['occupancy_std'][casc_i, spi]:<8.2f} ")
                 df.write('\n')
 
         # plot number of vacancies and interstitials as a function of the number of cascades
-        fig, axs = plt.subplots(1, 2, figsize=(10,10))
+        fig, axs = plt.subplots(1, 2, figsize=(12,7), sharey=True)
         axs: list[plt.Axes] = axs
 
         # vacancies
-        x = [ci+1 for ci in range(self.input_yml['num_cascades'])]
+        x = np.arange(1, self.input_yml['num_cascades']+1)
         y = self.data['num_vac_mean']
         yerr = (y - self.data['num_vac_std'], y + self.data['num_vac_std'])
         axs[0].plot(x, y)
         axs[0].fill_between(x, yerr[0], yerr[1], alpha=0.5)
         axs[0].set_xlabel('Number of Cascades')
-        axs[0].set_ylabel('Number of Vacancies')
+        axs[0].set_ylabel('Number of Defective WS Cells')
+        axs[0].set_title('Vacancies')
+        axs[0].set_xticks(x)
 
         # interstitials
         y = self.data['num_int_mean']
         yerr = (y - self.data['num_int_std'], y + self.data['num_int_std'])
         axs[1].plot(x, y)
         axs[1].fill_between(x, yerr[0], yerr[1], alpha=0.5)
+        axs1_2 = axs[1].twinx()
+        for spi, sp in enumerate(self.params['species']):
+            axs1_2.plot(x, self.data['occupancy_mean'][:, spi], label=sp, ls='--')
+            axs1_2.set_ylabel('Number of Atoms')
+            axs1_2.legend()
         axs[1].set_xlabel('Number of Cascades')
-        axs[1].set_ylabel('Number of Interstitials')
+        axs[1].set_title('Interstitials')
+        axs[1].set_xticks(x)
+
+        fig.savefig(self.dir / 'defects.png', bbox_inches='tight')
+        plt.close()
+
+        # write WC evolution data
+        with open(self.dir/f'wc.out', 'w') as f:
+            for shi in range(self.params['wc_shell']):           
+                f.write(f'Shell = {shi+1}\n\n')
+                for casc_i in range(self.input_yml['num_cascades']):
+                    f.write(f'{casc_i+1}:\n')
+                    f.write(np.array2string(self.data['wc_mean'][casc_i, shi, :, :])+'\n')
+                    f.write(np.array2string(self.data['wc_std'][casc_i, shi, :, :])+'\n\n')
+
+        # plot WC evolution data
+        colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
+
+        fig, axs = plt.subplots(self.params['wc_shell']+1, 1, figsize=((self.params['wc_shell']+1)*2, 18), sharex=True)
+        fig: plt.Figure = fig
+        axs: list[plt.Axes] = axs
+
+        x = np.arange(1, self.input_yml['num_cascades']+1)
+
+        for shi in range(self.params['wc_shell']):
+            for i in range(len(self.params['species']))[:-1]:
+                for j in range(len(self.params['species']))[i+1:]:
+                    pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
+
+                    y = self.data['wc_mean'][:, shi, i, j]
+                    yerr = (y - self.data['wc_std'][:, shi, i, j], y + self.data['wc_std'][:, shi, i, j])
+
+                    axs[shi].plot(x, y, '--o', ms=2, label=pair_str, color=colors[shi])
+                    axs[shi].fill_between(x, yerr[0], yerr[1], alpha=0.5, color=colors[shi])
+            
+            axs[shi].axhline(0, color='black', ls='--')
+            axs[shi].set_ylabel('Warren-Cowley Parameter')
+            axs[shi].set_title(f'Shell: {shi+1}')
+            axs[shi].legend()
+        
+        # plot WC evolution for each shell together without std
+        for i in range(len(self.params['species']))[:-1]:
+            for j in range(len(self.params['species']))[i+1:]:
+                for shi in range(self.params['wc_shell']):
+                    pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
+
+                    y = self.data['wc'][:, shi, i, j]
+                    axs[-1].plot(x, y, label=f'Shell {shi+1}', color=colors[shi])
+
+                axs[-1].axhline(0, color='black', ls='--')
+                axs[-1].set_xlabel('Number of Cascades')
+                axs[-1].set_ylabel('Warren-Cowley Parameter')
+                axs[-1].set_xticks(x)
+                axs[-1].legend()
+        
+        fig.savefig(self.dir/f'wc.png', bbox_inches="tight")
+        plt.close()
