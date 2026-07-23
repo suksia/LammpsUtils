@@ -1,9 +1,12 @@
-import random
+import random, logging
 from pathlib import Path
 import numpy as np
 from numpy.polynomial import Polynomial
 from scipy.spatial import cKDTree
 from numba import jit
+
+logger = logging.getLogger('LammpsUtils')
+logging.getLogger("numba").setLevel(logging.FATAL)
 
 def strip_split(s: str, sep=None, as_type=str):
     """Strip a string of any whitespace or newline characters, split it apart with a separator character, and convert items to given type."""
@@ -108,7 +111,7 @@ def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.nd
 
     # vector of square matrices (each is a shell) where rows are reference atoms types and columns are number of neighbors of each type
     num_shells = len(shell_radii)-1
-    neighbors = np.zeros((num_shells, num_unique_types, num_unique_types))
+    neighbors = np.zeros((num_shells, num_unique_types, num_unique_types), dtype=np.int64)
     wc = np.zeros((num_shells, num_unique_types, num_unique_types))
 
     # compute composition using types array
@@ -135,7 +138,7 @@ def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.nd
 
                 neigh_type = types[ni]
                 neighbors[shi, ref_type-1, neigh_type-1] += 1
-
+        
         return neighbors
 
     neighbors = count_neighbors(types, all_neigh_dist, all_neigh_idcs, neighbors, num_shells, shell_radii)
