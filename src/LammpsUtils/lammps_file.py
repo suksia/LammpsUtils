@@ -433,8 +433,10 @@ class LmpLog(LmpFile):
         # load each thermo output as a {timestep: list} kwarg
         for i in range(len(start)):
             current_data_labels = strip_split(self.lines[start[i]])[1:]
-
+            
             for line in self.lines[start[i]+1:stop[i]+1]:
+                if line[:8] == 'WARNING:':
+                    continue
                 vals = strip_split(line, as_type=float)
                 timestep, vals = int(vals[0]), vals[1:]
                 current_data = [math.nan]*len(self.column_names)

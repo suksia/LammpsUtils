@@ -923,10 +923,10 @@ class CC(Study):
 
             # subdirectories
             cascade_dir = subdir / 'cascades'
-            cascade_dir.mkdir()
+            cascade_dir.mkdir(exist_ok=True)
 
             logs_dir  = subdir / 'logs'
-            logs_dir.mkdir()
+            logs_dir.mkdir(exist_ok=True)
     
     def run_lammps(self):
         # run first cascade
@@ -942,7 +942,10 @@ class CC(Study):
 
             for mem_i in range(self.input_yml['members']):
                 # load configuration to determine new PKA position and velocity
-                dump = LmpDump(file_path=self.state[0][mem_i]['dir'] / f'cascade_{casc_i-1}.dump')
+                try:
+                    dump = LmpDump(file_path=self.state[0][mem_i]['dir'] / f'cascade_{casc_i-1}.dump')
+                except:
+                    dump = LmpDump(file_path=self.state[0][mem_i]['dir'] / 'cascades' / f'cascade_{casc_i-1}.dump')
                 struct_frame = dump.frames[0]
 
                 # filter positions by distance
@@ -1005,15 +1008,15 @@ class CC(Study):
 
         for mem_i in range(self.input_yml['members']):
             for casc_i in range(self.input_yml['num_cascades']):
-                start, stop = self.params['nsteps']*casc_i, self.params['nsteps']*(casc_i+1)-1
+                start, stop = self.params['nsteps']*casc_i, self.params['nsteps']*(casc_i+1)
 
                 casc_log = LmpLog(file_path = self.state[casc_i][mem_i]['dir'] / 'logs' / f'cascade_{casc_i}.log')
-                self.data['time'][mem_i, start:stop] = casc_log.data['Time']
-                self.data['temp'][mem_i, start:stop] = casc_log.data['Temp']
+                self.data['time'][mem_i, start:stop] = casc_log.data_df['Time'][:-1]
+                self.data['temp'][mem_i, start:stop] = casc_log.data_df['Temp'][:-1]
 
         # interpolate temperatures on a time-grid so that statistics can be computed over time
-        avg_sim_time = np.average(self.data['time'][:, -1])
-        num_grid_steps = np.round(avg_sim_time/0.01) # 0.01 ps steps
+        avg_sim_time = np.mean(self.data['time'][:, -1])
+        num_grid_steps = int(np.round(avg_sim_time/0.01)) # 0.01 ps steps
         self.data['time_grid'] = np.linspace(0, avg_sim_time, num_grid_steps)
 
         self.data['temp_grid'] = np.zeros((self.input_yml['members'], num_grid_steps))
@@ -1105,7 +1108,7 @@ class CC(Study):
         plt.xlabel('Time [ps]')
         plt.ylabel('Temperature [K]')
 
-        plt.savefig(self.dir / 'temp.png')
+        plt.savefig(self.dir / 'temp.png', bbox_inches='tight')
         plt.close()
 
         # write out defect data
