@@ -60,7 +60,7 @@ class Study:
         self.data = {}
 
         # finish initializing
-        super().build_directory()
+        self.load_restart()
         self.init_state()
 
     def init_state(self):
@@ -92,8 +92,8 @@ class Study:
 
         return dataset_configs
 
-    def build_directory(self):
-        """Loads a restart file if present, otherwise a new full study directory is created."""
+    def load_restart(self):
+        """Loads a restart file if present, otherwise a new study is defined."""
         # check directory for restart file first
         input_dir = Path(self.input_yml['dir'])
         assert input_dir.exists(), f'Directory {input_dir} does not exist'
@@ -112,6 +112,10 @@ class Study:
 
         if self.dir is None:
             self.dir = next_path(Path(self.input_yml['dir']) / self.name)
+
+    def build_directory(self):
+        """Build the directory tree specific to the study."""
+        pass
 
     def run_lammps(self, sim_ids: list = None, lmp_fn = 'main.in'):
         """Continuously launch LAMMPS in parallel until all simulations and members have finished running."""
