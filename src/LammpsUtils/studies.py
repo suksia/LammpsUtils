@@ -1,4 +1,4 @@
-import logging, random, math, os, time, subprocess
+import logging, random, math, os, time, subprocess, json
 from copy import deepcopy
 from pathlib import Path
 from LammpsUtils.lammps_file import *
@@ -50,7 +50,7 @@ class Study:
 
         self.name = self.input_yml['name']
         self.dir = None
-        self.restart = None
+        self.restart = {}
         self.templates_dir = PKG_DIR / 'templates' / self.__class__.__name__
 
         # containers defined in subclasses
@@ -102,35 +102,14 @@ class Study:
                 logger.debug(f'Restart file found. Reading contents...')
                 self.dir = input_dir
                 
-                self.restart: dict[int, dict[int, list[int]]] = {}
                 with open(input_dir/'LammpsUtils.restart', 'r') as rf:
-                    for line in rf.readlines():
-                        line = strip_split(line)
-                        if len(line) == 2:
-                            conf_i, sim_i, mem_i = None, line[0], int(line[1])
-                        elif len(line) == 3:
-                            conf_i, sim_i, mem_i = int(line[0]), line[1], int(line[2])
-                        else:
-                            continue
-                        
-                        if len(line) == 2:
-                            if sim_i not in self.restart.keys():
-                                self.restart.update({sim_i: [mem_i]})
-                            else:
-                                self.restart[sim_i].append(mem_i)
-
-                        elif len(line) == 3:
-                            if conf_i not in self.restart.keys():
-                                self.restart.update({conf_i: {sim_i: [mem_i]}})
-                            else:
-                                self.restart[conf_i][sim_i].append(mem_i)
+                    self.restart = json.load(rf)
                 
                 # delete restart file so it will be empty for first run_lammps() call
                 Path(input_dir/'LammpsUtils.restart').unlink()              
                 break
 
         if self.dir is None:
-            self.restart = False
             self.dir = next_path(Path(self.input_yml['dir']) / self.name)
 
     def run_lammps(self, sim_ids: list = None, lmp_fn = 'main.in'):
@@ -193,8 +172,15 @@ class Study:
                 if job.finished and not job.counted:
                     self.state[sim_i][mem_i]['status'] = 2
 
-                    with open(self.dir / 'LammpsUtils.restart', 'a') as f:
-                        f.write(f'{sim_i}\t{mem_i}\n')
+                    if 'runs' not in self.restart.keys():
+                        self.restart = {'runs': {sim_i: [mem_i]}}
+                    elif sim_i not in self.restart['runs'].keys():
+                        self.restart['runs'].update({sim_i: [mem_i]})
+                    else:
+                        self.restart['runs'][sim_i].append(mem_i)
+
+                    with open(self.dir / 'LammpsUtils.restart', 'w') as rf:
+                        json.dump(self.restart, rf)
 
                     logger.debug(f'LAMMPS finished for sim={sim_i} and member={mem_i}')
 
@@ -203,13 +189,9 @@ class Study:
                 sim_i, mem_i = check_status(0, return_next=True)
                 
                 if self.restart:
-                    if str(sim_i) in self.restart.keys():
-                        if mem_i in self.restart[str(sim_i)]:
+                    if sim_i in self.restart['runs'].keys():
+                        if mem_i in self.restart['runs'][sim_i]:
                             self.state[sim_i][mem_i]['status'] = 2
-
-                            with open(self.dir / 'LammpsUtils.restart', 'a') as f:
-                                f.write(f'{sim_i}\t{mem_i}\n')
-
                             logger.debug(f'LAMMPS has already been run for sim={sim_i} and member={mem_i}. Skipping it')
                             continue
 
@@ -802,32 +784,40 @@ class CC(Study):
         for spi in range(1, len(self.params['species'])+1):
             hot_group_line += f"((type=={spi}) && (c_1>{self.params['pe_thresh'][spi-1]})) || "
         self.params['hot_group'] = hot_group_line[:-4]
-        
+
         # need to sample PKA type (-> energy, size)
         for casc_i in range(self.input_yml['num_cascades']):
-            # PKA type determined randomly following composition
-            pka_types = []
-            if 'pka_type' not in self.input_yml.keys():
-                for sp, conc in self.params['composition'].items():
-                    pka_types += [sp]*round(self.input_yml['members']*conc/100)
+            # PKA type must be consistent between restarts to due it determining minimum required system size
+            # specifically breaks Warren-Cowley analysis
+            if 'pka_type' in self.restart.keys():
+                pka_types = [pt for pt in self.restart['pka_type'][casc_i]]
 
-                    rng = np.random.default_rng()
-                    pka_types = rng.permutation(np.array(pka_types)).tolist()
-
-                    # add or remove one random type due to rounding errors with composition
-                    diff = len(pka_types) - self.input_yml['members']
-                    if diff > 0:
-                        pka_types.pop(random.randint(0, len(pka_types)-1))
-                    elif diff < 0:
-                        pka_types += [self.params['species'][random.randint(0, len(self.params['species'])-1)]]
-
-            # prescribed PKA type            
             else:
-                if self.input_yml['pka_type'] not in self.params['composition'].keys():
-                    raise ValueError(f"PKA type {self.input_yml['pka_type']} not part of the composition.")
-                
-                pka_types = [self.params['pka_type']]*self.input_yml['members']
-            
+                # PKA type determined randomly following composition
+                pka_types = []
+                if 'pka_type' not in self.input_yml.keys():
+                    for sp, conc in self.params['composition'].items():
+                        pka_types += [sp]*round(self.input_yml['members']*conc/100)
+    
+                        rng = np.random.default_rng()
+                        pka_types = rng.permutation(np.array(pka_types)).tolist()
+    
+                        # add or remove one random type due to rounding errors with composition
+                        diff = len(pka_types) - self.input_yml['members']
+                        if diff > 0:
+                            pka_types.pop(random.randint(0, len(pka_types)-1))
+                        elif diff < 0:
+                            pka_types += [self.params['species'][random.randint(0, len(self.params['species'])-1)]]
+    
+                # prescribed PKA type            
+                else:
+                    if self.input_yml['pka_type'] not in self.params['composition'].keys():
+                        raise ValueError(f"PKA type {self.input_yml['pka_type']} not part of the composition.")
+                    
+                    pka_types = [self.params['pka_type']]*self.input_yml['members']
+
+                self.restart.update({'pka_types': {casc_i: pka_types}})
+
             # save type and energy
             for mem_i in range(self.input_yml['members']):
                 pka_type = pka_types[mem_i]
@@ -1038,16 +1028,16 @@ class CC(Study):
         self.data['num_int_mean'], self.data['num_int_std'] = np.mean(self.data['num_int'], axis=1), np.std(self.data['num_int'], axis=1)
         self.data['occupancy_mean'], self.data['occupancy_std'] = np.mean(self.data['occupancy'], axis=1), np.std(self.data['occupancy'], axis=1)
 
-        # analyze Warren-Cowley parameters for quenched cells
-        self.data['wc'] = np.zeros((self.input_yml['num_cascades'], self.input_yml['members'], self.params['wc_shell'], len(self.params['species']), len(self.params['species'])))
+        # analyze Warren-Cowley parameters for quenched cells (+1 for initial reference cell)
+        self.data['wc'] = np.zeros((self.input_yml['num_cascades']+1, self.input_yml['members'], self.params['wc_shell'], len(self.params['species']), len(self.params['species'])))
         
         for mem_i in range(self.params['members']):
             casc_dump = LmpDump(file_path=self.state[0][mem_i]['dir'] / 'quench.dump')
 
             # WC evolution by cascade for each member
-            for snapshot in casc_dump.frames.values():
+            for casc_i, snapshot in enumerate(casc_dump.frames.values()):
                 # compute lattice constant for adjusting shell radii
-                snap_lat_const = (product(snapshot['boxsize']) / product(self.params['size']))**(1/3)
+                snap_lat_const = (product(snapshot['boxsize']) / product(self.state_params[0][mem_i]['size']))**(1/3)
                 shell_radii = [r*snap_lat_const for r in self.params['wc_shell_cutoff']]
 
                 self.data['wc'][casc_i, mem_i, :, :, :] = warren_cowley(
@@ -1073,7 +1063,7 @@ class CC(Study):
                 df.write(f"       {'vac':<8} {'int':<8} {sp_line}\n")
 
                 for casc_i in range(self.input_yml['num_cascades']):
-                    df.write(f"       {casc_i+1:<6} {self.data['num_vac'][casc_i, mem_i]:<8} {self.data['num_int'][casc_i, mem_i]:<8} ")
+                    df.write(f"{casc_i+1:<6} {self.data['num_vac'][casc_i, mem_i]:<8} {self.data['num_int'][casc_i, mem_i]:<8} ")
                     for spi in range(len(self.params['species'])):
                         df.write(f"{self.data['occupancy'][casc_i, mem_i, spi]:<8} ")
                     df.write('\n')
@@ -1085,7 +1075,7 @@ class CC(Study):
                 sp_line += f'{sp:<16} '
 
             df.write('Statistics\n\n')
-            df.write(f"       {'vac':<16} {'int':<16} {sp_line}")
+            df.write(f"       {'vac':<16} {'int':<16} {sp_line}\n")
             for casc_i in range(self.input_yml['num_cascades']):
                 df.write(f"{casc_i+1:<6} {self.data['num_vac_mean'][casc_i]:<8.2f} {self.data['num_vac_std'][casc_i]:<8.2f} {self.data['num_int_mean'][casc_i]:<8.2f} {self.data['num_int_std'][casc_i]:<8.2f} ")
                 for spi in range(len(self.params['species'])):
@@ -1128,8 +1118,8 @@ class CC(Study):
         with open(self.dir/f'wc.out', 'w') as f:
             for shi in range(self.params['wc_shell']):           
                 f.write(f'Shell = {shi+1}\n\n')
-                for casc_i in range(self.input_yml['num_cascades']):
-                    f.write(f'{casc_i+1}:\n')
+                for casc_i in range(self.input_yml['num_cascades']+1):
+                    f.write(f'{casc_i}:\n')
                     f.write(np.array2string(self.data['wc_mean'][casc_i, shi, :, :])+'\n')
                     f.write(np.array2string(self.data['wc_std'][casc_i, shi, :, :])+'\n\n')
 
@@ -1140,7 +1130,7 @@ class CC(Study):
         fig: plt.Figure = fig
         axs: list[plt.Axes] = axs
 
-        x = np.arange(1, self.input_yml['num_cascades']+1)
+        x = np.arange(0, self.input_yml['num_cascades']+1)
 
         for shi in range(self.params['wc_shell']):
             for i in range(len(self.params['species']))[:-1]:
@@ -1164,7 +1154,7 @@ class CC(Study):
                 for shi in range(self.params['wc_shell']):
                     pair_str = f"{self.params['species'][i]}-{self.params['species'][j]}"
 
-                    y = self.data['wc'][:, shi, i, j]
+                    y = self.data['wc_mean'][:, shi, i, j]
                     axs[-1].plot(x, y, label=f'Shell {shi+1}', color=colors[shi])
 
                 axs[-1].axhline(0, color='black', ls='--')
