@@ -60,6 +60,7 @@ class Study:
         self.data = {}
 
         # finish initializing
+        super().build_directory()
         self.init_state()
 
     def init_state(self):
@@ -188,7 +189,7 @@ class Study:
             if num_running < max_parallel_njobs and num_left:
                 sim_i, mem_i = check_status(0, return_next=True)
                 
-                if self.restart:
+                if 'runs' in self.restart.keys():
                     if sim_i in self.restart['runs'].keys():
                         if mem_i in self.restart['runs'][sim_i]:
                             self.state[sim_i][mem_i]['status'] = 2
@@ -297,7 +298,6 @@ class MCMD(Study):
                 ensemble_unfix_fn: ensemble_unfix_in})
 
     def build_directory(self):
-        super().build_directory()
         self.dir.mkdir(exist_ok=True)
         
         runs_dir: Path = self.dir / 'runs'
@@ -594,7 +594,6 @@ class PDI(Study):
             self.state['pristine'][mem_i]['input_files'].update({'pristine.struct': pris_struct})
 
     def build_directory(self):
-        super().build_directory()
         self.dir.mkdir(exist_ok=True)
 
         runs_dir: Path = self.dir / 'runs'
@@ -816,7 +815,10 @@ class CC(Study):
                     
                     pka_types = [self.params['pka_type']]*self.input_yml['members']
 
-                self.restart.update({'pka_types': {casc_i: pka_types}})
+                if 'pka_types' not in self.restart.keys():
+                    self.restart.update({'pka_types': {casc_i: pka_types}})
+                else:
+                    self.restart['pka_types'].update({casc_i: pka_types})
 
             # save type and energy
             for mem_i in range(self.input_yml['members']):
@@ -902,7 +904,6 @@ class CC(Study):
                 'cascade_0.in': first_cascade_in})
             
     def build_directory(self):
-        super().build_directory()
         self.dir.mkdir(exist_ok=True)
         
         runs_dir: Path = self.dir / 'runs'
