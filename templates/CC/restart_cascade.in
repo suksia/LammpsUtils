@@ -50,7 +50,7 @@ group hot delete
 write_restart cascade.restart
 
 reset_timestep 0
-write_dump all custom cascades/cascade_?cascade_idx?.dump id type x y z
+write_dump all custom cascade_?cascade_idx?.dump id type x y z
 
 # ----- quench post-cascade cells ----- #
 

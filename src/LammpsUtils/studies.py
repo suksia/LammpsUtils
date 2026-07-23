@@ -942,7 +942,7 @@ class CC(Study):
 
             for mem_i in range(self.input_yml['members']):
                 # load configuration to determine new PKA position and velocity
-                dump = LmpDump(file_path=self.state[0][mem_i]['dir'] / 'cascades' / f'cascade_{casc_i-1}.dump')
+                dump = LmpDump(file_path=self.state[0][mem_i]['dir'] / f'cascade_{casc_i-1}.dump')
                 struct_frame = dump.frames[0]
 
                 # filter positions by distance
@@ -992,6 +992,11 @@ class CC(Study):
             
             # run cascade
             super().run_lammps([casc_i], f'cascade_{casc_i}.in')
+
+        # clean up directories
+        for mem_i in range(self.input_yml['members']):
+            for file in self.state[0][mem_i]['dir'].glob('cascade_*'):
+                file.rename(self.state[0][mem_i]['dir'] / 'cascades' / file.name)
 
     def analyze(self):
         # get temperature evolution for each member
