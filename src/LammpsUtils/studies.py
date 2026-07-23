@@ -920,6 +920,13 @@ class CC(Study):
             subdir.mkdir(exist_ok=True)
             for casc_i in range(self.input_yml['num_cascades']):
                 self.state[casc_i][mem_i].update({'dir': subdir})
+
+            # subdirectories
+            cascade_dir = subdir / 'cascades'
+            cascade_dir.mkdir()
+
+            logs_dir  = subdir / 'logs'
+            logs_dir.mkdir()
     
     def run_lammps(self):
         # run first cascade
@@ -935,7 +942,7 @@ class CC(Study):
 
             for mem_i in range(self.input_yml['members']):
                 # load configuration to determine new PKA position and velocity
-                dump = LmpDump(file_path=self.state[0][mem_i]['dir'] / f'cascade_{casc_i-1}.dump')
+                dump = LmpDump(file_path=self.state[0][mem_i]['dir'] / 'cascades' / f'cascade_{casc_i-1}.dump')
                 struct_frame = dump.frames[0]
 
                 # filter positions by distance
@@ -995,7 +1002,7 @@ class CC(Study):
             for casc_i in range(self.input_yml['num_cascades']):
                 start, stop = self.params['nsteps']*casc_i, self.params['nsteps']*(casc_i+1)-1
 
-                casc_log = LmpLog(file_path = self.state[casc_i][mem_i]['dir'] / f'cascade_{casc_i}.log')
+                casc_log = LmpLog(file_path = self.state[casc_i][mem_i]['dir'] / 'logs' / f'cascade_{casc_i}.log')
                 self.data['time'][mem_i, start:stop] = casc_log.data['Time']
                 self.data['temp'][mem_i, start:stop] = casc_log.data['Temp']
 

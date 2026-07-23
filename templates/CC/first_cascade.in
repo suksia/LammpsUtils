@@ -60,7 +60,7 @@ write_dump all custom reference.dump id type x y z
 
 timestep 0.0001
 
-log cascade_0.log
+log logs/cascade_0.log
 thermo_style custom step time dt press temp
 thermo 1
 
@@ -89,10 +89,11 @@ group hot delete
 
 write_restart cascade.restart
 
-# ----- quench reference and post-cascade cells ----- #
-
 reset_timestep 0
+write_dump all custom cascades/cascade_?cascade_idx?.dump id type x y z
 write_dump all custom final.dump id type x y z
+
+# ----- quench reference and post-cascade cells ----- #
 
 log minimize.log
 thermo_style custom step pe press
