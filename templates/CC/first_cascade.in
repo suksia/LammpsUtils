@@ -26,9 +26,11 @@ write_dump bath custom bath.dump id type x y z
 region pka sphere ?pka_pos? 0.5
 group pka region pka
 
-write_dump pka custom pka_?cascade_idx?.dump id type x y z
+write_dump pka custom pka.dump id type x y z
 
 # ----- equilibrate ----- #
+
+log equil.log
 
 thermo_style custom step pe
 thermo 1
@@ -58,6 +60,7 @@ write_dump all custom reference.dump id type x y z
 
 timestep 0.0001
 
+log cascade_0.log
 thermo_style custom step time dt press temp
 thermo 1
 
@@ -86,12 +89,12 @@ group hot delete
 
 write_restart cascade.restart
 
-reset_timestep 0
-write_dump all custom cascade_?cascade_idx?.dump id type x y z
-write_dump all custom final.dump id type x y z
-
 # ----- quench reference and post-cascade cells ----- #
 
+reset_timestep 0
+write_dump all custom final.dump id type x y z
+
+log minimize.log
 thermo_style custom step pe press
 thermo 1
 
