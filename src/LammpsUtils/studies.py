@@ -793,7 +793,7 @@ class CC(Study):
             skip_pka_sampling = False
             if 'pka_types' in self.restart.keys():
                 if str(casc_i) in self.restart['pka_types'].keys():
-                    pka_types = [pt for pt in self.restart['pka_type'][str(casc_i)]]
+                    pka_types = [pt for pt in self.restart['pka_types'][str(casc_i)]]
                     skip_pka_sampling = True
 
             # PKA type determined randomly following composition
