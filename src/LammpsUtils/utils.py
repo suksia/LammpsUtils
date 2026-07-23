@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 from numpy.polynomial import Polynomial
 from scipy.spatial import cKDTree
+from numba import jit
 
 def strip_split(s: str, sep=None, as_type=str):
     """Strip a string of any whitespace or newline characters, split it apart with a separator character, and convert items to given type."""
@@ -114,21 +115,30 @@ def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.nd
     composition = {int(t): np.sum(np.where(types==t, 0, 1))/len(types) for t in unique_types}
 
     # get number of neighbors of each type for each atom (using mininum image convention)
-    for pos in positions:
-        neigh_dist, neigh_idcs = position_tree.query(pos, k=num_neighbors+1)
+    all_neigh_dist, all_neigh_idcs = position_tree.query(positions, k=num_neighbors+1)
+    all_neigh_dist, all_neigh_idcs = all_neigh_dist[:, 1:], all_neigh_idcs[:, 1:]
 
-        # get central atom type and remove it from lists
-        ref_type = types[neigh_idcs[0]]
-        neigh_dist, neigh_idcs = neigh_dist[1:],  neigh_idcs[1:]
+    @jit(nopython=True)
+    def count_neighbors(types, all_neigh_dist, all_neigh_idcs, neighbors, num_shells, shell_radii):
+        # loop over lattice sites
+        for i in range(len(types)):
+            ref_type = types[i]
 
-        for shi in range(num_shells):
-            # atom position indices within shell
-            shell_mask = (neigh_dist > shell_radii[shi]) & (neigh_dist < shell_radii[shi+1])
-            shell_idcs = neigh_idcs[shell_mask]
-            
-            for ni in shell_idcs:
+            # loop over neighbors for each lattice site, incrementing the shell index when the distance exceeds the current shell radius
+            shi = 0
+            for ni, dist in zip(all_neigh_idcs[i], all_neigh_dist[i]):
+                while shi < num_shells and dist >= shell_radii[shi+1]:
+                    shi += 1
+
+                if shi >= num_shells:
+                    break
+
                 neigh_type = types[ni]
                 neighbors[shi, ref_type-1, neigh_type-1] += 1
+
+        return neighbors
+
+    neighbors = count_neighbors(types, all_neigh_dist, all_neigh_idcs, neighbors, num_shells, shell_radii)
 
     # compute all possible paramaters as an NxN matrix where N is the number types following the same convention as neighbors matrices
     for shi in range(num_shells): 
@@ -137,4 +147,3 @@ def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.nd
                 wc[shi, to-1, ti-1] = 1 - (neighbors[shi, to-1, ti-1] / np.sum(neighbors[shi, to-1, :])) / composition[to]
 
     return wc
-
