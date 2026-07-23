@@ -105,9 +105,7 @@ class Study:
                 
                 with open(input_dir/'LammpsUtils.restart', 'r') as rf:
                     self.restart = json.load(rf)
-                
-                # delete restart file so it will be empty for first run_lammps() call
-                Path(input_dir/'LammpsUtils.restart').unlink()              
+                           
                 break
 
         if self.dir is None:
@@ -178,7 +176,7 @@ class Study:
                     self.state[sim_i][mem_i]['status'] = 2
 
                     if 'runs' not in self.restart.keys():
-                        self.restart = {'runs': {str(sim_i): [mem_i]}}
+                        self.restart.update({'runs': {str(sim_i): [mem_i]}})
                     elif str(sim_i) not in self.restart['runs'].keys():
                         self.restart['runs'].update({str(sim_i): [mem_i]})
                     else:
@@ -792,26 +790,29 @@ class CC(Study):
         for casc_i in range(self.input_yml['num_cascades']):
             # PKA type must be consistent between restarts to due it determining minimum required system size
             # specifically breaks Warren-Cowley analysis
-            if 'pka_type' in self.restart.keys():
-                pka_types = [pt for pt in self.restart['pka_type'][str(casc_i)]]
+            skip_pka_sampling = False
+            if 'pka_types' in self.restart.keys():
+                if str(casc_i) in self.restart['pka_types'].keys():
+                    pka_types = [pt for pt in self.restart['pka_type'][str(casc_i)]]
+                    skip_pka_sampling = True
 
-            else:
-                # PKA type determined randomly following composition
+            # PKA type determined randomly following composition
+            if not skip_pka_sampling:
                 pka_types = []
                 if 'pka_type' not in self.input_yml.keys():
                     for sp, conc in self.params['composition'].items():
                         pka_types += [sp]*round(self.input_yml['members']*conc/100)
-    
+
                         rng = np.random.default_rng()
                         pka_types = rng.permutation(np.array(pka_types)).tolist()
-    
+
                         # add or remove one random type due to rounding errors with composition
                         diff = len(pka_types) - self.input_yml['members']
                         if diff > 0:
                             pka_types.pop(random.randint(0, len(pka_types)-1))
                         elif diff < 0:
                             pka_types += [self.params['species'][random.randint(0, len(self.params['species'])-1)]]
-    
+
                 # prescribed PKA type            
                 else:
                     if self.input_yml['pka_type'] not in self.params['composition'].keys():
@@ -1077,10 +1078,10 @@ class CC(Study):
 
             sp_line = ''
             for sp in self.params['species']:
-                sp_line += f'{sp:<16} '
+                sp_line += f'{sp:<17} '
 
             df.write('Statistics\n\n')
-            df.write(f"       {'vac':<16} {'int':<16} {sp_line}\n")
+            df.write(f"       {'vac':<17} {'int':<17} {sp_line}\n")
             for casc_i in range(self.input_yml['num_cascades']):
                 df.write(f"{casc_i+1:<6} {self.data['num_vac_mean'][casc_i]:<8.2f} {self.data['num_vac_std'][casc_i]:<8.2f} {self.data['num_int_mean'][casc_i]:<8.2f} {self.data['num_int_std'][casc_i]:<8.2f} ")
                 for spi in range(len(self.params['species'])):
