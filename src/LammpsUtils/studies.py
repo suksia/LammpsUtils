@@ -178,11 +178,11 @@ class Study:
                     self.state[sim_i][mem_i]['status'] = 2
 
                     if 'runs' not in self.restart.keys():
-                        self.restart = {'runs': {sim_i: [mem_i]}}
-                    elif sim_i not in self.restart['runs'].keys():
-                        self.restart['runs'].update({sim_i: [mem_i]})
+                        self.restart = {'runs': {str(sim_i): [mem_i]}}
+                    elif str(sim_i) not in self.restart['runs'].keys():
+                        self.restart['runs'].update({str(sim_i): [mem_i]})
                     else:
-                        self.restart['runs'][sim_i].append(mem_i)
+                        self.restart['runs'][str(sim_i)].append(mem_i)
 
                     with open(self.dir / 'LammpsUtils.restart', 'w') as rf:
                         json.dump(self.restart, rf)
@@ -194,8 +194,8 @@ class Study:
                 sim_i, mem_i = check_status(0, return_next=True)
                 
                 if 'runs' in self.restart.keys():
-                    if sim_i in self.restart['runs'].keys():
-                        if mem_i in self.restart['runs'][sim_i]:
+                    if str(sim_i) in self.restart['runs'].keys():
+                        if mem_i in self.restart['runs'][str(sim_i)]:
                             self.state[sim_i][mem_i]['status'] = 2
                             logger.debug(f'LAMMPS has already been run for sim={sim_i} and member={mem_i}. Skipping it')
                             continue
@@ -793,7 +793,7 @@ class CC(Study):
             # PKA type must be consistent between restarts to due it determining minimum required system size
             # specifically breaks Warren-Cowley analysis
             if 'pka_type' in self.restart.keys():
-                pka_types = [pt for pt in self.restart['pka_type'][casc_i]]
+                pka_types = [pt for pt in self.restart['pka_type'][str(casc_i)]]
 
             else:
                 # PKA type determined randomly following composition
@@ -820,9 +820,9 @@ class CC(Study):
                     pka_types = [self.params['pka_type']]*self.input_yml['members']
 
                 if 'pka_types' not in self.restart.keys():
-                    self.restart.update({'pka_types': {casc_i: pka_types}})
+                    self.restart.update({'pka_types': {str(casc_i): pka_types}})
                 else:
-                    self.restart['pka_types'].update({casc_i: pka_types})
+                    self.restart['pka_types'].update({str(casc_i): pka_types})
 
             # save type and energy
             for mem_i in range(self.input_yml['members']):
