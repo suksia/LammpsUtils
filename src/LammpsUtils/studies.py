@@ -1013,18 +1013,6 @@ class CC(Study):
                 casc_log = LmpLog(file_path = self.state[casc_i][mem_i]['dir'] / 'logs' / f'cascade_{casc_i}.log')
                 self.data['time'][mem_i, start:stop] = casc_log.data_df['Time'][:-1]
                 self.data['temp'][mem_i, start:stop] = casc_log.data_df['Temp'][:-1]
-
-        # interpolate temperatures on a time-grid so that statistics can be computed over time
-        avg_sim_time = np.mean(self.data['time'][:, -1])
-        num_grid_steps = int(np.round(avg_sim_time/0.01)) # 0.01 ps steps
-        self.data['time_grid'] = np.linspace(0, avg_sim_time, num_grid_steps)
-
-        self.data['temp_grid'] = np.zeros((self.input_yml['members'], num_grid_steps))
-        for mem_i in range(self.input_yml['members']):
-            self.data['temp_grid'][mem_i, :] = np.interp(self.data['time_grid'], self.data['time'][mem_i], self.data['temp'][mem_i])
-
-        self.data['temp_mean'] = np.mean(self.data['temp_grid'], axis=0)
-        self.data['temp_std'] = np.std(self.data['temp_grid'], axis=0)
             
         # determine number Frenkel pairs and the types of atoms in the interstitial cells
         self.data['num_vac'] = np.zeros((self.input_yml['num_cascades'], self.input_yml['members']))
@@ -1097,19 +1085,14 @@ class CC(Study):
         self.data['wc_std'] = np.std(self.data['wc'], axis=1)
 
     def save_data(self):
-        # plot temperature evolution
-        x = self.data['time_grid'] 
-        y = self.data['temp_mean']
-        yerr = (y - self.data['temp_std'], y + self.data['temp_std'])
-
-        plt.plot(x, y, color='firebrick')
-        plt.fill_between(x, yerr[0], yerr[1], alpha=0.5, color='firebrick')
-        plt.axhline(self.params['temp'], ls='--', color='black')
-        plt.xlabel('Time [ps]')
-        plt.ylabel('Temperature [K]')
-
-        plt.savefig(self.dir / 'temp.png', bbox_inches='tight')
-        plt.close()
+        # plot temperature evolution for each member
+        for mem_i in range(self.input_yml['members']):
+            plt.plot(self.data['time'][mem_i] ,self.data['temp'][mem_i], color='firebrick')
+            plt.axhline(self.params['temp'], ls='--', color='black')
+            plt.xlabel('Time [ps]')
+            plt.ylabel('Temperature [K]')
+            plt.savefig(self.state[0][mem_i]['dir'] / 'temp.png', bbox_inches='tight')
+            plt.close()
 
         # write out defect data
         with open(self.dir / 'defects.out', 'w') as df:
