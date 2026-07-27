@@ -747,6 +747,9 @@ class CC(Study):
         if 'wc_shell' not in self.input_yml.keys():
             self.params['wc_shell'] = 3
 
+        if 'wc_dist' not in self.input_yml.keys():
+            self.params['wc_dist'] = 1.0
+
         # neighbors up to 5th shell (cutoffs are half-way between ideal shell radii)
         if self.params['lattice'] == 'bcc':
             self.params['wc_num_neighbors'] = [8, 6, 12, 24, 8]
@@ -1073,13 +1076,21 @@ class CC(Study):
                 snap_lat_const = (product(snapshot['boxsize']) / product(self.state_params[0][mem_i]['size']))**(1/3)
                 shell_radii = [r*snap_lat_const for r in self.params['wc_shell_cutoff']]
 
+                # select atoms in a central, smaller box for Warren-Cowley analysis
+                boxlo = np.array([snapshot['box']['xlo'], snapshot['box']['ylo'], snapshot['box']['zlo']])
+                rlo, rhi = boxlo + (1-self.params['wc_dist'])*snapshot['boxsize']/2, boxlo + (1+self.params['wc_dist'])*snapshot['boxsize']/2
+
+                query_pos_mask = np.all((snapshot['position'] >= rlo) & (snapshot['position'] <= rhi), axis=1)
+                query_pos = snapshot['position'][query_pos_mask]
+
                 self.data['wc'][casc_i, mem_i, :, :, :] = warren_cowley(
                     sum(self.params['wc_num_neighbors'][:self.params['wc_shell']]),
                     shell_radii[:self.params['wc_shell']+1],
                     snapshot['position'], 
                     snapshot['type'], 
-                    np.array([snapshot['box']['xlo'], snapshot['box']['ylo'], snapshot['box']['zlo']]),
-                    snapshot['boxsize'])
+                    boxlo,
+                    snapshot['boxsize'],
+                    query_pos=query_pos)
         
         self.data['wc_mean'] = np.mean(self.data['wc'], axis=1)
         self.data['wc_std'] = np.std(self.data['wc'], axis=1)

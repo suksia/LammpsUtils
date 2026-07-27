@@ -92,7 +92,7 @@ def random_range(start, stop, step=1, seed=None):
     values = np.arange(start, stop, step)
     return rng.permutation(values).tolist()
 
-def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.ndarray, types: np.ndarray, boxlo:np.ndarray, boxsize: np.ndarray):
+def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.ndarray, types: np.ndarray, boxlo: np.ndarray, boxsize: np.ndarray, query_pos: np.ndarray = None):
     """Compute the Warren-Cowley parameters of a configuration given the simulation box size, atomic positions, and types."""
     # list like [1, 2, 1, 1] -> list like [1, 2]
     unique_types = sorted(list(set(types))) 
@@ -109,6 +109,14 @@ def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.nd
     # k-d trees have O(log n) speed
     position_tree = cKDTree(positions, boxsize=boxsize)
 
+    # apply translations to query positions
+    if query_pos:
+        query_pos = (query_pos - boxlo).round(decimals=4)
+        unw_num_imgs = np.floor_divide(query_pos, boxsize)
+        query_pos = query_pos - unw_num_imgs*boxsize
+    else:
+        query_pos = positions
+
     # vector of square matrices (each is a shell) where rows are reference atoms types and columns are number of neighbors of each type
     num_shells = len(shell_radii)-1
     neighbors = np.zeros((num_shells, num_unique_types, num_unique_types), dtype=np.int64)
@@ -118,7 +126,7 @@ def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.nd
     composition = {int(t): np.sum(np.where(types==t, 0, 1))/len(types) for t in unique_types}
 
     # get number of neighbors of each type for each atom (using mininum image convention)
-    all_neigh_dist, all_neigh_idcs = position_tree.query(positions, k=num_neighbors+1)
+    all_neigh_dist, all_neigh_idcs = position_tree.query(query_pos, k=num_neighbors+1)
     all_neigh_dist, all_neigh_idcs = all_neigh_dist[:, 1:], all_neigh_idcs[:, 1:]
 
     @jit(nopython=True)
