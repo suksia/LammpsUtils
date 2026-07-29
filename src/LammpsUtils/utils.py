@@ -8,6 +8,8 @@ from numba import jit
 logger = logging.getLogger('LammpsUtils')
 logging.getLogger("numba").setLevel(logging.FATAL)
 
+KB = 8.617333262e-5 # eV/K
+
 def strip_split(s: str, sep=None, as_type=str):
     """Strip a string of any whitespace or newline characters, split it apart with a separator character, and convert items to given type."""
     s = s.strip()
