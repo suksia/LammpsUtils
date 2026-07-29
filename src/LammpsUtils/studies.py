@@ -611,7 +611,7 @@ class ODT(Study):
                 self.state[temp][mem_i].update({'dir' : mem_dir})
 
     def analyze(self):
-        ordered_enthalpy = np.zeros((len(self.sim_ids), self.input_yml['members'], round(self.params['equil']/self.params['thermo'])))
+        ordered_enthalpy = np.zeros((len(self.sim_ids), self.input_yml['members'], round(self.params['equil']/self.params['thermo'])+1))
         random_enthalpy = ordered_enthalpy.copy()
 
         for temp_i, temp in enumerate(self.sim_ids):
@@ -663,7 +663,8 @@ class ODT(Study):
             yerr = (y - self.data['ordered_enthalpy_std'], y + self.data['ordered_enthalpy_std'])
             axs[0].plot(x, y, color='tab:blue')
             axs[0].fill_between(x, yerr[0], yerr[1], alpha=0.5, color='tab:blue')
-            axs[0].hlines(self.data['ordered_time_avg_enthalpy'][temp_i], x0, x1, ls='--', color='black', label=r"$\bar{H}$")
+            axs[0].plot([x0, x1], [self.data['ordered_time_avg_enthalpy'][temp_i]]*2, ls='None', marker='|', markersize=12, color='black')
+            axs[0].plot([x0, x1], [self.data['ordered_time_avg_enthalpy'][temp_i]]*2, ls='--', color='black', label=r"$\bar{H}$") # plotting line separately due to legend formatting
             axs[0].set_ylabel('Enthalpy [eV]')
             axs[0].set_title(f"Ordered ({self.input_yml['order']})")
             axs[0].legend()
@@ -672,7 +673,8 @@ class ODT(Study):
             yerr = (y - self.data['random_enthalpy_std'], y + self.data['random_enthalpy_std'])
             axs[1].plot(x, y, color='tab:orange')
             axs[1].fill_between(x, yerr[0], yerr[1], alpha=0.5, color='tab:orange')
-            axs[1].hlines(self.data['random_time_avg_enthalpy'][temp_i], x0, x1, ls='--', color='black', label=r"$\bar{H}$")
+            axs[1].plot([x0, x1], [self.data['random_time_avg_enthalpy'][temp_i]]*2, ls='None', marker='|', markersize=12, color='black')
+            axs[1].plot([x0, x1], [self.data['random_time_avg_enthalpy'][temp_i]]*2, ls='--', color='black', label=r"$\bar{H}$")
             axs[1].set_ylabel('Enthalpy [eV]')
             axs[1].set_title(f"Disordered")
             axs[1].set_xlabel('Time [ps]')
