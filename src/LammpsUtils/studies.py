@@ -598,6 +598,8 @@ class ODT(Study):
                     'ordered.struct': ordered_struct,
                     'random.struct': random_struct})
 
+        self.params['num_atoms'] = random_struct.num_atoms
+
     def build_directory(self):
         self.dir.mkdir(exist_ok=True)
 
@@ -617,7 +619,7 @@ class ODT(Study):
         for temp_i, temp in enumerate(self.sim_ids):
             for mem_i in range(self.input_yml['members']):
                 ordered_log = LmpLog(file_path=self.state[temp][mem_i]['dir']/'ordered.log')
-                ordered_enthalpy[temp_i, mem_i, :] = ordered_log.data_df['Enthalpy'].to_numpy()
+                ordered_enthalpy[temp_i, mem_i, :] = ordered_log.data_df['Enthalpy'].to_numpy() / self.params['num_atoms']
 
                 random_log = LmpLog(file_path=self.state[temp][mem_i]['dir']/'random.log')
                 random_enthalpy[temp_i, mem_i, :] = random_log.data_df['Enthalpy'].to_numpy()
@@ -639,8 +641,8 @@ class ODT(Study):
         self.data['random_time_avg_enthalpy'] = np.mean(self.data['random_enthalpy_mean'][:, time_avg_mask], axis=1)
         self.data['random_time_avg_enthalpy_std'] = np.std(self.data['random_enthalpy_mean'][:, time_avg_mask], axis=1)
 
-        self.data['delta_enthalpy'] = self.data['random_time_avg_enthalpy'] - self.data['ordered_time_avg_enthalpy']
-        self.data['delta_enthalpy_std'] = np.sqrt(np.square(self.data['ordered_time_avg_enthalpy_std']) + np.square(self.data['random_time_avg_enthalpy_std']))
+        self.data['delta_enthalpy'] = (self.data['random_time_avg_enthalpy'] - self.data['ordered_time_avg_enthalpy']) / self.params['num_atoms']
+        self.data['delta_enthalpy_std'] = np.sqrt(np.square(self.data['ordered_time_avg_enthalpy_std']) + np.square(self.data['random_time_avg_enthalpy_std'])) / self.params['num_atoms']
 
         at_percents = [self.input_yml['composition'][sp]/100 for sp in self.params['species']]
         conf_entropy = -KB * sum([atp * math.log(atp) for atp in at_percents])
@@ -659,8 +661,8 @@ class ODT(Study):
             x_tavg = self.data['time_avg_timesteps']*self.input_yml['timestep']
             x0, x1 = x_tavg[0], x_tavg[-1]
 
-            y = self.data['ordered_enthalpy_mean']
-            yerr = (y - self.data['ordered_enthalpy_std'], y + self.data['ordered_enthalpy_std'])
+            y = self.data['ordered_enthalpy_mean'][temp_i]
+            yerr = (y - self.data['ordered_enthalpy_std'][temp_i], y + self.data['ordered_enthalpy_std'][temp_i])
             axs[0].plot(x, y, color='tab:blue')
             axs[0].fill_between(x, yerr[0], yerr[1], alpha=0.5, color='tab:blue')
             axs[0].plot([x0, x1], [self.data['ordered_time_avg_enthalpy'][temp_i]]*2, ls='None', marker='|', markersize=12, color='black')
@@ -669,8 +671,8 @@ class ODT(Study):
             axs[0].set_title(f"Ordered ({self.input_yml['order']})")
             axs[0].legend()
 
-            y = self.data['random_enthalpy_mean']
-            yerr = (y - self.data['random_enthalpy_std'], y + self.data['random_enthalpy_std'])
+            y = self.data['random_enthalpy_mean'][temp_i]
+            yerr = (y - self.data['random_enthalpy_std'][temp_i], y + self.data['random_enthalpy_std'][temp_i])
             axs[1].plot(x, y, color='tab:orange')
             axs[1].fill_between(x, yerr[0], yerr[1], alpha=0.5, color='tab:orange')
             axs[1].plot([x0, x1], [self.data['random_time_avg_enthalpy'][temp_i]]*2, ls='None', marker='|', markersize=12, color='black')
@@ -680,15 +682,40 @@ class ODT(Study):
             axs[1].set_xlabel('Time [ps]')
             axs[1].legend()
 
-            fig.savefig(self.dir / str(temp) / 'enthalpy.png', bbox_inches='tight')
+            fig.savefig(self.dir / str(temp) / f'enthalpy_{temp}.png', bbox_inches='tight')
             plt.close()
 
-        plt.errorbar(self.data['temperature'], self.data['delta_free'], yerr=self.data['delta_free_std'])
+        with open(self.dir / 'enthalpy.out', 'w') as f:
+            for temp_i, temp in enumerate(self.sim_ids):
+                f.write(f'Temp = {temp}\n\n')
+
+                for mem_i in range(self.input_yml['members']):
+                    f.write(f"       {'H(disordered)':<30} {'H(ordered)':<30}\n")
+
+                    for step_i in range(self.data['timesteps']):
+                        step = self.data['timesteps'][step_i]
+
+                        ord_H = self.data['ordered_enthalpy_mean'][temp_i, mem_i, step_i]
+                        ord_H_std = self.data['ordered_enthalpy_std'][temp_i, mem_i, step_i]
+
+                        rand_H = self.data['random_enthalpy_mean'][temp_i, mem_i, step_i]
+                        rand_H_std = self.data['random_enthalpy_std'][temp_i, mem_i, step_i]
+
+                        f.write(f"{step:<6} {ord_H:<15.2f} {ord_H_std:<15.4f} {rand_H:<15.2f} {rand_H_std:<15.4f}\n")
+                    
+                    f.write('\n\n')
+
+        plt.plot(self.data['temperature'], self.data['delta_free']*1000)
         plt.axhline(color='black', ls='--')
         plt.xlabel('Temperature [K]')
-        plt.ylabel(r"\Delta G = G_\text{dis} - G_\text{ord}")
+        plt.ylabel(r"$\Delta g = g_\text{dis} - g_\text{ord}$ [meV]")
         plt.savefig(self.dir / 'free_energy.png', bbox_inches='tight')
         plt.close()
+
+        with open(self.dir / 'free_energy.out', 'w') as f:
+            f.write(f"{'Temperature':<20} {'dh':<20} {'Ts':<20} {'dg'}\n")
+            for temp_i, temp in enumerate(self.sim_ids):
+                f.write(f"{temp:<20} {self.data['delta_enthalpy'][temp_i]:<20.5f} {self.data['random_TS'][temp_i]:<20.5f} {self.data['delta_free'][temp_i]:<20.5f}\n")
         
 @register_study
 class PDI(Study):
