@@ -137,7 +137,10 @@ temperature: <temperature range parameters as a list [Tmin, Tmax, Ntemps]>
 Tdamp: <damping constant for thermostat>
 Pdamp: <damping constant for barostat>
 minimize: <minimization criteria as a list [etol, ftol, maxiter, maxeval]>
-equil: <number of equilibration timesteps before enthalpy measurement>
+
+equil: <number of equilibration timesteps>
+thermo: <frequency (in timesteps) for computing enthalpy during equilibration>
+time_avg: <number of timesteps for computing time-averaged enthalpy>
 ```
 
 ## `TI`

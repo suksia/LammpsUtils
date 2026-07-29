@@ -2,11 +2,11 @@ units metal
 atom_style atomic
 boundary p  p  p
 
+log ordered.log
+
 read_data ordered.struct
 
 velocity all create ?temp? ?ordered_seed?
-
-log ordered.log
 
 include run.in
 

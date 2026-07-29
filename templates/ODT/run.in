@@ -13,7 +13,12 @@ minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
 unfix 1
 
+reset_timestep 0
+
 neigh_modify every 10 check yes
+
+thermo_style custom step etotal press vol enthalpy
+thermo ?thermo?
 
 fix 1 all npt temp ?temp? ?temp? ?Tdamp? iso 0.0 0.0 ?Pdamp?
 run ?equil?
