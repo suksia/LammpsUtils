@@ -589,16 +589,12 @@ class ODT(Study):
                 main_in = LmpInput(file_path=self.templates_dir/'main.in')
                 main_in.add_params(self.params)
 
-                run_in = LmpInput(file_path=self.templates_dir/'run.in')
-                run_in.add_params(self.params)
-
                 ordered_struct = LmpStructure(lattice_params=self.params)
                 self.params['order'] = 'random'
                 random_struct = LmpStructure(lattice_params=self.params)
 
                 self.state[temp][mem_i]['input_files'].update({
                     'main.in': main_in,
-                    'run.in': run_in,
                     'ordered.struct': ordered_struct,
                     'random.struct': random_struct})
 
