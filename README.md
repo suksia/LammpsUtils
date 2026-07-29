@@ -41,7 +41,7 @@ timestep: <MD timestep in ps>
 temperature: <Metropolis sampling and MD temperature>
 ensemble: <langevin, npt>
 Tdamp: <coupling or friction constant for thermostat>
-Pdamp: <coupling constant for barostate (for npt)>
+Pdamp: <coupling constant for barostat (for npt)>
 processors: <number of MPI ranks for each independent simulation to be run in parallel>
 
 minimize: <minimization criteria for final quenching as a list [etol, ftol, maxiter, maxeval]>
@@ -87,6 +87,62 @@ snapshot: 1k
 
 wc_shell: 5
 ```
+
+## `ODT`
+
+Acronym: **O**rder-**D**isorder **T**ransition
+
+This study computes the Gibbs free energy difference between ordered $(T\to 0)$ and disordered $(T\to\infty)$ ensembles as a function of temperature. 
+
+For a real multicomponent alloy, understanding short-range order (SRO) is crucial because it determines the typical motifs for the local chemical environment. SRO is dictated by the Gibbs free energy $$G=H-TS,$$ where the $G$ is at a global minimum for the equilibrium ensemble. For any two unique ensembles (with different partition functions), $\Delta G = G_1-G_2$ describes the relative stability or thermodynamic preference for either ensemble. The one closer to the global minimum is the more favored state. 
+
+A competition exists between the enthalpy, reduced by ordering or separating, and the entropy, increased by disordering. In other words, ordering is favored when the number of microstates lost (due to ordering) is relatively small compared to the gain in negative enthalpy. If it is assumed that the real system, the equilibrium ensemble in this case, lies somewhere between the ordered and disordered states, comparing their free energy gives some insight into the proximity to each limit. Furthermore, the temperature where $\Delta G = G_\text{order} - G_\text{random} = 0$ is called the *order-disorder transition temperature*.
+
+The free energy for the ideal limits can be computed directly because $$s(T\to 0)\approx 0, \qquad s(T\to\infty)=-k_\text{B}\sum_i x_i \ln x_i,$$ where $x_i$ is the concentration of each alloy species, expressed in at.%, and the configurational entropy is in its intensive form. The real system entropy is bounded by these limits as SRO only decreases the number of occupied microstates. It can, however, be estimated with good accuracy using techniques like 
+thermodynamic integration.
+
+### Workflow
+
+1. Generate ordered (or separated) and random configurations
+2. Equilibrate to $T_i$
+3. Repeat 1-2 for many configurations and compute $\langle H \rangle$ for each ensemble
+4. Repeat 1-3 for multiple temperatures
+5. Compute $\Delta G(T) = G_\text{random} - G_\text{order}$ 
+
+### Input File
+
+```yaml
+name: <directory name of new study>
+type: ODT
+dir: <parent or restart directory path>
+
+lattice: <bcc>
+lattice_const: <conventional unit cell length>
+size: <box length in terms of number of replicated unit cells (e.g., 50 -> 50x50x50 box)>
+composition:
+    <element 1 in potential file>: <atomic percentage as a whole number>
+    <element 2 in potential file>: <atomic percentage as a whole number>
+    ...
+order: <separated, B2>
+
+pair_style: <LAMMPS pair style type>
+potential: <filename of interatomic potential in LammpsUtils/potentials/>
+skin: <skin distance for neighbor list>
+
+members: <number of independent simulations for each temperature>
+processors: <number of MPI ranks for each independent simulation to be run in parallel>
+
+timestep: <MD timestep in ps>
+temperature: <temperature range parameters as a list [Tmin, Tmax, Ntemps]>
+Tdamp: <damping constant for thermostat>
+Pdamp: <damping constant for barostat>
+minimize: <minimization criteria as a list [etol, ftol, maxiter, maxeval]>
+equil: <number of equilibration timesteps before enthalpy measurement>
+```
+
+## `TI`
+
+Acronym: **T**hermodynamic **I**ntegration
 
 ## `PDI`
 

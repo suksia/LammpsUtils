@@ -1,0 +1,25 @@
+units metal
+atom_style atomic
+boundary p  p  p
+
+read_data ordered.struct
+
+velocity all create ?temp? ?ordered_seed?
+
+log ordered.log
+
+include run.in
+
+clear
+
+units metal
+atom_style atomic
+boundary p  p  p
+
+log random.log
+
+read_data random.struct
+
+velocity all create ?temp? ?random_seed?
+
+include run.in

@@ -92,7 +92,7 @@ def random_range(start, stop, step=1, seed=None):
     values = np.arange(start, stop, step)
     return rng.permutation(values).tolist()
 
-def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.ndarray, types: np.ndarray, boxlo: np.ndarray, boxsize: np.ndarray, query_pos: np.ndarray = None):
+def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.ndarray, types: np.ndarray, boxlo: np.ndarray, boxsize: np.ndarray, query: list[np.ndarray] = None):
     """Compute the Warren-Cowley parameters of a configuration given the simulation box size, atomic positions, and types."""
     # list like [1, 2, 1, 1] -> list like [1, 2]
     unique_types = sorted(list(set(types))) 
@@ -110,12 +110,14 @@ def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.nd
     position_tree = cKDTree(positions, boxsize=boxsize)
 
     # apply translations to query positions
-    if query_pos:
-        query_pos = (query_pos - boxlo).round(decimals=4)
+    if query_pos is not None:
+        query_pos = (query[0] - boxlo).round(decimals=4)
         unw_num_imgs = np.floor_divide(query_pos, boxsize)
         query_pos = query_pos - unw_num_imgs*boxsize
+        query_types = query[1]
     else:
         query_pos = positions
+        query_types = types
 
     # vector of square matrices (each is a shell) where rows are reference atoms types and columns are number of neighbors of each type
     num_shells = len(shell_radii)-1
@@ -130,10 +132,10 @@ def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.nd
     all_neigh_dist, all_neigh_idcs = all_neigh_dist[:, 1:], all_neigh_idcs[:, 1:]
 
     @jit(nopython=True)
-    def count_neighbors(types, all_neigh_dist, all_neigh_idcs, neighbors, num_shells, shell_radii):
+    def count_neighbors(types, query_types, all_neigh_dist, all_neigh_idcs, neighbors, num_shells, shell_radii):
         # loop over lattice sites
-        for i in range(len(types)):
-            ref_type = types[i]
+        for i in range(len(query_types)):
+            ref_type = query_types[i]
 
             # loop over neighbors for each lattice site, incrementing the shell index when the distance exceeds the current shell radius
             shi = 0
@@ -149,7 +151,7 @@ def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.nd
         
         return neighbors
 
-    neighbors = count_neighbors(types, all_neigh_dist, all_neigh_idcs, neighbors, num_shells, shell_radii)
+    neighbors = count_neighbors(types, query_types, all_neigh_dist, all_neigh_idcs, neighbors, num_shells, shell_radii)
 
     # compute all possible paramaters as an NxN matrix where N is the number types following the same convention as neighbors matrices
     for shi in range(num_shells): 

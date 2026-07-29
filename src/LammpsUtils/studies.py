@@ -77,11 +77,6 @@ class Study:
             raise ValueError(f'Dataset directory {dataset_dir} does not exist')
         
         dataset_configs = [fp for fp in dataset_dir.iterdir() if fp.is_file()]
-
-        # make sure there are enough configurations
-        if self.params['members'] > len(dataset_configs):
-            raise ValueError(f"Number of members ({self.params['members']}) exceeds number of configurations available in dataset ({len(dataset_configs)})")
-        
         dataset_configs = [dataset_configs[i] for i in random_range(0, len(dataset_configs))]
 
         # load a config to determine the composition from the comment line
@@ -556,6 +551,69 @@ class MCMD(Study):
                     f.write('\n\n'+'-'*50+'\n\n')
 
 @register_study
+class AMCMD(Study):
+    def __init__(self, input_yml: dict[str, dict]):
+        raise NotImplementedError
+
+@register_study
+class ODT(Study):
+    def init_state(self):
+        Tmin, Tmax, Ntemps = self.input_yml['temperature']
+        for temp in np.linspace(Tmin, Tmax, Ntemps):
+            self.sim_ids.append(temp)
+            self.state.update({temp: {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}})
+
+        self.params.update({
+            'size': [self.input_yml['size']]*3,
+            'species': list(self.input_yml['composition'].keys()),
+            'elements': tilps(list(self.input_yml['composition'].keys())),
+            'equil': unprefix(self.input_yml['equil']),
+            'etol': f"{self.input_yml['minimize'][0]:.2e}",
+            'ftol': f"{self.input_yml['minimize'][1]:.2e}",
+            'maxiter': unprefix(self.input_yml['minimize'][2]),
+            'maxeval': unprefix(self.input_yml['minimize'][3])})
+
+        # seed for each configuration (ordered, disordered for each temperature and member)
+        seeds = create_seeds(2*len(self.sim_ids)*self.params['members'])
+
+        for temp_i, temp in enumerate(self.sim_ids):
+            for mem_i in range(self.input_yml['members']):
+                seed_i = temp_i*self.params['members'] + 2*mem_i
+                self.params.update({
+                    'temp': temp,
+                    'ordered_seed': seeds[seed_i],
+                    'random_seed': seeds[seed_i+1],
+                    'order': self.input_yml['order']})
+
+                main_in = LmpInput(file_path=self.templates_dir/'main.in')
+                main_in.add_params(self.params)
+
+                run_in = LmpInput(file_path=self.templates_dir/'run.in')
+                run_in.add_params(self.params)
+
+                ordered_struct = LmpStructure(lattice_params=self.params)
+                self.params['order'] = 'random'
+                random_struct = LmpStructure(lattice_params=self.params)
+
+                self.state[temp][mem_i]['input_files'].update({
+                    'main.in': main_in,
+                    'run.in': run_in,
+                    'ordered.struct': ordered_struct,
+                    'random.struct': random_struct})
+
+    def build_directory(self):
+        self.dir.mkdir(exist_ok=True)
+
+        for temp in self.sim_ids:
+            temp_dir: Path = self.dir / temp
+            temp_dir.mkdir(exist_ok=True)
+
+            for mem_i in range(self.input_yml['members']):
+                mem_dir = temp_dir / str(mem_i)
+                mem_dir.mkdir(exist_ok=True)
+                self.state[temp][mem_i].update({'dir' : mem_dir})
+
+@register_study
 class PDI(Study):
     def init_state(self):
         # setup containers
@@ -704,6 +762,86 @@ class PDI(Study):
         plt.ylabel('Frequency')
         plt.savefig(self.dir/'insertion_histo.png', bbox_inches="tight")
         plt.close()
+
+@register_study
+class PDM(Study):
+    def __init__(self, input_yml: dict[str, dict]):
+        raise NotImplementedError
+
+    def init_state(self):
+        # setup containers
+        self.sim_ids = self.input_yml['temperature']
+        if type(self.input_yml['temperature']) != list:
+            self.sim_ids = [self.input_yml['temperature']]
+
+        for temp in self.sim_ids:
+            self.state.update({temp: {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}})
+            self.state_params.update({temp: {mem_i: {} for mem_i in range(self.params['members'])}})
+
+        # obtain a randomized list of paths to configurations in the dataset
+        if 'dataset' in self.input_yml.keys():
+            dataset_configs_fps = self.load_configs()
+
+            num_fps, num_req_configs = len(dataset_configs_fps), len(self.sim_ids)*self.input_yml['members']
+            if num_fps < num_req_configs:
+                raise ValueError(f"Dataset does not contain enough configurations (found {num_fps}, needed {num_req_configs})")
+
+        # update global params (instantaneous values subject to change) common to all members/configurations
+        self.params.update({
+            'species': list(self.params['composition'].keys()),
+            'elements': tilps(list(self.params['composition'].keys())),
+            'temp': self.input_yml['temperature'],
+            'etol': f"{self.input_yml['minimize'][0]:.2e}",
+            'ftol': f"{self.input_yml['minimize'][1]:.2e}",
+            'maxiter': unprefix(self.input_yml['minimize'][2]),
+            'maxeval': unprefix(self.input_yml['minimize'][3])})
+
+        # define defect parameters
+        if self.input_yml['defect'] == 'vac':
+            def_type = 'vac'
+            def_species = None
+            def_orientation = None
+        else:
+            def_type = self.input_yml['int_type']
+            def_species = self.input_yml['int_species']
+            def_orientation = str(self.input_yml['int_orient'])
+
+        # define input files and insert point defects
+        for temp_i, temp in enumerate(self.sim_ids):
+            for mem_i in range(self.input_yml['members']):
+                main_in = LmpInput(file_path=self.templates_dir/'main.in')
+                main_in.add_params(self.params)
+
+                if 'dataset' in self.input_yml.keys():
+                    config_i = temp_i*len(self.input_yml['members']) + mem_i
+                    config_in = LmpStructure(file_path=dataset_configs_fps[config_i])
+                else:
+                    config_in = LmpStructure(lattice_params=self.params)
+
+                config_in.insert_point_defect(def_type, def_species, def_orientation)
+
+                self.state[temp][mem_i]['input_files'].update({
+                    'main.in': main_in,
+                    'config.in': config_in})
+
+    def build_directory(self):
+        self.dir.mkdir(exist_ok=True)
+
+        # directories for each temp since each will be analyzed
+        for temp in self.sim_ids:
+            temp_dir: Path = self.dir / temp
+            temp_dir.mkdir(exist_ok=True)
+
+            for mem_i in range(self.input_yml['members']):
+                mem_dir = temp_dir / str(mem_i)
+                mem_dir.mkdir(exist_ok=True)
+                self.state[temp][mem_i].update({'dir' : mem_dir})
+    
+    def analyze(self):
+        pass
+
+    def save_data(self):
+        pass
 
 @register_study
 class CC(Study):
@@ -1080,8 +1218,9 @@ class CC(Study):
                 boxlo = np.array([snapshot['box']['xlo'], snapshot['box']['ylo'], snapshot['box']['zlo']])
                 rlo, rhi = boxlo + (1-self.params['wc_dist'])*snapshot['boxsize']/2, boxlo + (1+self.params['wc_dist'])*snapshot['boxsize']/2
 
-                query_pos_mask = np.all((snapshot['position'] >= rlo) & (snapshot['position'] <= rhi), axis=1)
-                query_pos = snapshot['position'][query_pos_mask]
+                query_mask = np.all((snapshot['position'] >= rlo) & (snapshot['position'] <= rhi), axis=1)
+                query_pos = snapshot['position'][query_mask]
+                query_types = snapshot['type'][query_mask]
 
                 self.data['wc'][casc_i, mem_i, :, :, :] = warren_cowley(
                     sum(self.params['wc_num_neighbors'][:self.params['wc_shell']]),
@@ -1090,7 +1229,7 @@ class CC(Study):
                     snapshot['type'], 
                     boxlo,
                     snapshot['boxsize'],
-                    query_pos=query_pos)
+                    query = [query_pos, query_types])
         
         self.data['wc_mean'] = np.mean(self.data['wc'], axis=1)
         self.data['wc_std'] = np.std(self.data['wc'], axis=1)
