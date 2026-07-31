@@ -110,7 +110,7 @@ class Study:
         """Build the directory tree specific to the study."""
         pass
 
-    def run_lammps(self, sim_ids: list = None, lmp_fn = 'main.in'):
+    def run_lammps(self, sim_ids: list = None, lmp_fn = 'main.in', restart_name = 'runs'):
         """Continuously launch LAMMPS in parallel until all simulations and members have finished running."""
         if not sim_ids:
             sim_ids = self.sim_ids
@@ -170,12 +170,12 @@ class Study:
                 if job.finished and not job.counted:
                     self.state[sim_i][mem_i]['status'] = 2
 
-                    if 'runs' not in self.restart.keys():
-                        self.restart.update({'runs': {str(sim_i): [mem_i]}})
-                    elif str(sim_i) not in self.restart['runs'].keys():
-                        self.restart['runs'].update({str(sim_i): [mem_i]})
+                    if restart_name not in self.restart.keys():
+                        self.restart.update({restart_name: {str(sim_i): [mem_i]}})
+                    elif str(sim_i) not in self.restart[restart_name].keys():
+                        self.restart[restart_name].update({str(sim_i): [mem_i]})
                     else:
-                        self.restart['runs'][str(sim_i)].append(mem_i)
+                        self.restart[restart_name][str(sim_i)].append(mem_i)
 
                     with open(self.dir / 'LammpsUtils.restart', 'w') as rf:
                         json.dump(self.restart, rf)
@@ -186,9 +186,9 @@ class Study:
             if num_running < max_parallel_njobs and num_left:
                 sim_i, mem_i = check_status(0, return_next=True)
                 
-                if 'runs' in self.restart.keys():
-                    if str(sim_i) in self.restart['runs'].keys():
-                        if mem_i in self.restart['runs'][str(sim_i)]:
+                if restart_name in self.restart.keys():
+                    if str(sim_i) in self.restart[restart_name].keys():
+                        if mem_i in self.restart[restart_name][str(sim_i)]:
                             self.state[sim_i][mem_i]['status'] = 2
                             logger.debug(f'LAMMPS has already been run for sim={sim_i} and member={mem_i}. Skipping it')
                             continue
@@ -987,7 +987,7 @@ class PDM(Study):
 
     def run_lammps(self):
         logger.debug(f'Equilibrating...')
-        super().run_lammps(lmp_fn='equil.in')
+        super().run_lammps(lmp_fn='equil.in', restart_name='equil')
         
         # add point defects to equilibrated configurations
         logger.debug(f'Inserting point defects...')
@@ -999,9 +999,10 @@ class PDM(Study):
                 config.insert_point_defect(self.params['def_type'], self.params['def_species'], self.params['def_orientation'])
 
                 self.state[temp][mem_i]['input_files']['config.in'] = config
+                self.state[temp][mem_i]['input_files']['config.in'] = config
 
         logger.debug(f'Running diffusion loop...')
-        super().run_lammps(lmp_fn='diffusion.in')
+        super().run_lammps(lmp_fn='diffusion.in', restart_name='diffusion')
     
     def analyze(self):
         pass
