@@ -15,12 +15,13 @@ neigh_modify every 1 delay 0 check yes
 thermo_style custom step pe press vol
 thermo 1
 
+fix 1 all box/relax iso 0.0
 min_style cg
 minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
-# ---------- Equilibrate ---------- #
+unfix 1
 
-reset_timestep 0
+# ---------- Equilibrate ---------- #
 
 write_dump all custom init.dump id type x y z
 write_dump all custom diffusion.dump id type x y z
@@ -29,30 +30,29 @@ write_dump all custom quench.dump id type x y z
 neigh_modify delay 10
 
 timestep ?timestep?
-velocity all create ?temp? ?seed?
+velocity all create ?temp? ?vel_seed? mom yes
 
-fix 1 nve
-fix 2 all langevin ?temp? ?temp? 100
-fix 3 all momentum 100 linear 1 1 1
+fix equil all npt temp ?temp? ?temp? ?Tdamp? iso 0.0 0.0 ?Pdamp?
+fix mom all momentum 1000 linear 1 1 1
 
-log equil.log
-thermo_style custom step etotal temp press
-thermo 1000
+thermo_style custom step etotal temp press vol
+thermo 100
 
 run ?equil?
 
-# --=-------- Diffusion --=-------- #
+unfix equil
+
+# ----------- Diffusion ----------- #
+
+fix nve all nve
+fix lang all langevin ?temp? ?temp? ?Tdamp? ?lang_seed?
 
 reset_timestep 0
 
-compute msdvar all msd
+include msd.in
 
 dump 1 all custom ?snapshot? diffusion.dump id type x y z
 dump_modify 1 append yes
-
-log diffusion.log
-thermo_style custom step c_msdvar[4]
-thermo ?snapshot?
 
 run ?diffusion?
  
@@ -60,6 +60,7 @@ run ?diffusion?
 
 unfix 1
 unfix 2
+unfix 3
 undump 1
 
 log quench.log

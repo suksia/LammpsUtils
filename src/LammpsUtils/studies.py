@@ -551,7 +551,7 @@ class MCMD(Study):
                     f.write('\n\n'+'-'*50+'\n\n')
 
 @register_study
-class AMCMD(Study):
+class REPT(Study):
     def __init__(self, input_yml: dict[str, dict]):
         raise NotImplementedError
 
@@ -572,7 +572,9 @@ class ODT(Study):
             'etol': f"{self.input_yml['minimize'][0]:.2e}",
             'ftol': f"{self.input_yml['minimize'][1]:.2e}",
             'maxiter': unprefix(self.input_yml['minimize'][2]),
-            'maxeval': unprefix(self.input_yml['minimize'][3])})
+            'maxeval': unprefix(self.input_yml['minimize'][3]),
+            'thermo': unprefix(self.input_yml['thermo']),
+            'time_avg': unprefix(self.input_yml['time_avg'])})
 
         # seed for each configuration (ordered, disordered for each temperature and member)
         seeds = create_seeds(2*len(self.sim_ids)*self.params['members'])
@@ -690,7 +692,7 @@ class ODT(Study):
                 f.write(f'Temp = {temp}\n\n')
                 f.write(f"           {'H(disordered)':<41} {'H(ordered)':<40}\n")
 
-                for step_i in range(self.data['timesteps']):
+                for step_i in range(len(self.data['timesteps'])):
                     step = self.data['timesteps'][step_i]
 
                     ord_H = self.data['ordered_enthalpy_mean'][temp_i, step_i]
@@ -867,9 +869,6 @@ class PDI(Study):
 
 @register_study
 class PDM(Study):
-    def __init__(self, input_yml: dict[str, dict]):
-        raise NotImplementedError
-
     def init_state(self):
         # setup containers
         self.sim_ids = self.input_yml['temperature']
@@ -896,7 +895,10 @@ class PDM(Study):
             'etol': f"{self.input_yml['minimize'][0]:.2e}",
             'ftol': f"{self.input_yml['minimize'][1]:.2e}",
             'maxiter': unprefix(self.input_yml['minimize'][2]),
-            'maxeval': unprefix(self.input_yml['minimize'][3])})
+            'maxeval': unprefix(self.input_yml['minimize'][3]),
+            'equil': unprefix(self.input_yml['equil']),
+            'diffusion': unprefix(self.input_yml['diffusion']),
+            'snapshot': unprefix(self.input_yml['snapshot'])})
 
         # define defect parameters
         if self.input_yml['defect'] == 'vac':
@@ -908,11 +910,39 @@ class PDM(Study):
             def_species = self.input_yml['int_species']
             def_orientation = str(self.input_yml['int_orient'])
 
+        # define groups and MSD computes for LAMMPS
+        msd_in_lines = ''
+        for spi in range(1, len(self.params['species'])+1):
+            msd_in_lines += f'group {spi} type {spi}\n'
+        msd_in_lines += '\n'
+        
+        for spi in range(1, len(self.params['species'])+1):
+            msd_in_lines += f'compute msd{spi} {spi} msd\n'
+        msd_in_lines += '\n'
+
+        msd_in_lines += 'log diffusion.log\n'
+        msd_in_lines += 'thermo_style custom step'
+        for spi in range(1, len(self.params['species'])+1):
+            msd_in_lines += f' c_msd{spi}[4]'
+        msd_in_lines += '\nthermo ?snapshot?'
+
+        # seeds for velocity and thermostat for each configuration (temperature, member)
+        seeds = create_seeds(2*len(self.sim_ids)*self.params['members'])
+
         # define input files and insert point defects
         for temp_i, temp in enumerate(self.sim_ids):
             for mem_i in range(self.input_yml['members']):
+                seed_i = temp_i*self.params['members'] + 2*mem_i
+                self.params.update({
+                    'temp': temp,
+                    'vel_seed': seeds[seed_i],
+                    'lang_seed': seeds[seed_i+1]})
+
                 main_in = LmpInput(file_path=self.templates_dir/'main.in')
                 main_in.add_params(self.params)
+
+                msd_in = LmpInput(content_str=msd_in_lines)
+                msd_in.add_params(self.params)
 
                 if 'dataset' in self.input_yml.keys():
                     config_i = temp_i*len(self.input_yml['members']) + mem_i
@@ -924,6 +954,7 @@ class PDM(Study):
 
                 self.state[temp][mem_i]['input_files'].update({
                     'main.in': main_in,
+                    'msd.in': msd_in,
                     'config.in': config_in})
 
     def build_directory(self):

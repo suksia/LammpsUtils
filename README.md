@@ -6,6 +6,8 @@ For each study, a brief workflow is provided along with the input keyword argume
 
 ## `MCMD`
 
+Acronym: **M**onte **C**arlo w/ **M**olecular **D**ynamics
+
 This study is designed to perform a series of independent hybrid Monte Carlo with molecular dynamics (MCMD) simulations on unique starting configurations. The final configuration for each simulation is then quenched and saved as part of a reusable dataset. 
 
 ### Workflow
@@ -88,6 +90,16 @@ snapshot: 1k
 wc_shell: 5
 ```
 
+## `REPT`
+
+Acronym: **R**eplic **E**xchange / **P**arallel **T**empering
+
+### Workflow
+
+### Input File
+
+### Example
+
 ## `ODT`
 
 Acronym: **O**rder-**D**isorder **T**ransition
@@ -143,11 +155,11 @@ thermo: <frequency (in timesteps) for computing enthalpy during equilibration>
 time_avg: <number of timesteps for computing time-averaged enthalpy>
 ```
 
-## `TI`
 
-Acronym: **T**hermodynamic **I**ntegration
 
 ## `PDI`
+
+Acronym: **P**oint **D**efect **I**nsertion
 
 This study is designed to insert a point defect into a series of independent configurations and evaluate the distribution of _insertion_ energy. Note, the insertion energy does not contain chemical, electrostatic, or finite-size corrections. Point defect formation energy can be computed from the insertion energy via $$E_\text{form} = E_\text{ins} \pm \mu + qE_F + E_\text{corr},$$
 where $+\mu$ corresponds to a vacancy and $-\mu$ for a self-interstitial. Note that the 0K lattice constant is used for both pristine and defective cells.
@@ -219,7 +231,77 @@ processors: 4
 minimize: [1.0e-7, 0.0, 10000, 1000000]
 ```
 
-## `SCC`
+## `PDM`
+
+Acronym: **P**oint **D**efect **M**igration
+
+This study inserts a point defect into a configuration and runs an MD loop to allow for diffusion via defect migration. Diffusion is evaluated using the mean squared displacement (MSD), where the squared displacement $|\mathbf{r}(t)-\mathbf{r}_0|^2$ is computed for every particle in a given group at some time $t$, and then averaged over all particles. $$\text{MSD} = \langle |\mathbf{r}(t)-\mathbf{r}_0|^2\rangle$$ The quality of MSD statistics stems from the number of particles used to compute the average, so for individual point defects many different configurations must be used. Similarly, the amount of mass diffusion is small as it can only proceed via the migration of individual point defects, so even the diffusion of alloy species must be averaged over many different configurations.
+
+If an MSD curve is typical, in that a linear regime exists corresponding to steady-state diffusion (Brownian motion), a straight line can be fit which has the slope $6D$, where $D$ is the diffusivity. Futhermore, an effective point defect migration energy $E_m$ can be obtained from $$D(T) = D_0\exp\left(-\frac{E_m}{k_\text{B}T}\right),$$ which requires computing the diffusivity at multiple temperatures and fitting a straight line to the plot of $\ln D(T) = a/T + b$, where $a=-E_m/k_\text{B}$.  
+
+### Workflow
+
+1. Sample a random, separated, or B2 ordered configuration, or load one from a dataset
+2. Insert a point defect on the lattice site closest to the center of the simulation box
+3. Minimize to 0K
+4. Equilibrate with NPT to desired temperature
+5. Run diffusion with NVT
+6. Minimize snapshots captured between jumps to remove thermal displacements
+7. Analyze snapshots with Wigner-Seitz analysis to obtain point defect trajectory
+8. Repeat 1-7 for many configurations
+9. Compute mean squared displacement for the point defect and each alloy species over all configurations
+10. Fit steady state MSD curves with straight lines to obtain diffusivities
+11. (Optional) Repeat 1-10 for multiple temperatures and compute the effective migration energy
+
+### Input File
+
+```yaml
+name: <directory name of new study>
+type: PDM
+dir: <parent or restart directory path>
+
+dataset: <path to directory containing LAMMPS data files>
+
+OR
+
+lattice: <bcc>
+lattice_const: <conventional cell length>
+size: <box length in terms of number of replicated unit cells (e.g., 50 -> 50x50x50 box)>
+composition:
+    <element 1 in potential file>: <atomic percentage as a whole number>
+    <element 2 in potential file>: <atomic percentage as a whole number>
+    ...
+order: <random, separated, B2>
+
+pair_style: <LAMMPS pair style type>
+potential: <filename of interatomic potential in LammpsUtils/potentials/>
+skin: <skin distance for neighbor list>
+
+members: <number of independent configurations simulated per temperature>
+temperature: <single value or a list of temperatures to run PD diffusion>
+timestep: <timestep for equilibration and diffusion>
+Tdamp: <equilibration temperature damping coefficient and diffusion Langevin friction coefficient>
+Pdamp: <equilibration pressure damping coefficient>
+processors: <number of MPI ranks for each independent simulation to be run in parallel>
+minimize: <minimization criteria for initial minimization and quenching as a list [etol, ftol, maxiter, maxeval]>
+snapshot: <frequency (in timesteps) of snapshots during diffusion>
+equil: <number of equilibration timesteps>
+diffusion: <number of diffusion timesteps>
+
+defect: <vac, int>
+int_type: <crowd, db; type of interstitial structure>
+int_species: <element name of interstitial>
+int_orientation: <crystal direction indices as a string (e.g., 111 is the <111> direction)>
+```
+
+### Example
+
+
+
+
+## `CC`
+
+Acronym: **C**ollision **C**ascade
 
 This study is designed to create a single collision cascade from neutron irradiation in a series of independent simulations and evaluate the displacements per atom (DPA), number of Frenkel pairs, ballistic mixing, and structural energy change due to defect formation. 
 

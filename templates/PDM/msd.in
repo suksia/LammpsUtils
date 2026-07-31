@@ -1,0 +1,13 @@
+# groups and computes for each species (defined automatically like below)
+
+group 1 type 1
+group 2 type 2
+group 3 type 3
+
+compute msd1 1 msd
+compute msd2 2 msd
+compute msd3 3 msd
+
+log diffusion.log
+thermo_style custom step c_msd1[4] c_msd2[4] c_msd3[4]
+thermo ?snapshot?
