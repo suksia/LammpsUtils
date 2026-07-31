@@ -909,10 +909,12 @@ class PDM(Study):
             self.params['def_type'] = 'vac'
             self.params['def_species'] = None
             self.params['def_orientation'] = None
+            self.params['int_spacing'] = None
         else:
             self.params['def_type'] = self.input_yml['int_type']
             self.params['def_species'] = self.input_yml['int_species']
             self.params['def_orientation'] = str(self.input_yml['int_orient'])
+            self.params['int_spacing'] = self.input_yml['int_spacing']
 
         # define groups and MSD computes for LAMMPS
         msd_in_lines = ''
@@ -996,10 +998,10 @@ class PDM(Study):
                 dump = LmpDump(file_path = self.state[temp][mem_i]['dir'] / 'quench.dump')
 
                 config = dump.to_struct(self.lattice_params, timestep = 0)
-                config.insert_point_defect(self.params['def_type'], self.params['def_species'], self.params['def_orientation'])
+                config.insert_point_defect(self.params['def_type'], self.params['def_species'], self.params['def_orientation'], int_spacing=self.params['int_orientation'])
 
                 self.state[temp][mem_i]['input_files']['config.in'] = config
-                self.state[temp][mem_i]['input_files']['config.in'] = config
+                self.state[temp][mem_i]['status'] = 0
 
         logger.debug(f'Running diffusion loop...')
         super().run_lammps(lmp_fn='diffusion.in', restart_name='diffusion')

@@ -22,7 +22,6 @@ fix lang all langevin ?temp? ?temp? ?Tdamp? ?lang_seed?
 fix mom all momentum 1000 linear 1 1 1
 
 dump dif all custom ?snapshot? diffusion.dump id type x y z
-dump_modify 1 append yes
 
 run ?diffusion?
 

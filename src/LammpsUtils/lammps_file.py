@@ -301,7 +301,7 @@ class LmpStructure(LmpFile):
 
         super().write_to_file(write_path, append_newline=True)
             
-    def insert_point_defect(self, defect_type: str, defect_species: str, defect_orientation: str):
+    def insert_point_defect(self, defect_type: str, defect_species: str, defect_orientation: str, int_spacing: float = None):
         """Inserts a point defect at or near the center of the supercell."""
         center = self.lattice_const*np.array(self.size)/2
         
@@ -326,7 +326,7 @@ class LmpStructure(LmpFile):
         # crowdion -> add atom between two others
         elif defect_type == 'crowd':
             if defect_orientation == '111':
-                int_pos = self.positions[ref_pos_i] + self.lattice_const/4
+                int_pos = self.positions[ref_pos_i] + self.lattice_const*int_spacing
             
             self.ids = np.insert(self.ids, (ref_pos_i), (self.num_atoms), axis=0)
             self.types =  np.insert(self.types, (ref_pos_i), self.species_to_type[defect_species], axis=0)
@@ -337,9 +337,9 @@ class LmpStructure(LmpFile):
         # dumbbell -> move reference atom over and add atom on other side
         elif defect_type == 'db':
             if defect_orientation == '100':
-                spacing = np.array([self.lattice_const/6, 0, 0])
+                spacing = np.array([self.lattice_const*int_spacing, 0, 0])
             elif defect_orientation == '111':
-                spacing = np.array([self.lattice_const/6, self.lattice_const/6, self.lattice_const/6])
+                spacing = np.array([self.lattice_const*int_spacing, self.lattice_const*int_spacing, self.lattice_const*int_spacing])
 
             ref_at_pos, int_pos = self.positions[ref_pos_i] - spacing, self.positions[ref_pos_i] + spacing
 
