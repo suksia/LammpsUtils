@@ -1,0 +1,61 @@
+units metal
+atom_style atomic
+boundary p p p
+
+read_data config.in
+
+pair_style ?pair_style?
+pair_coeff * * ?potential? ?elements?
+
+neighbor ?skin? bin
+neigh_modify every 10 check yes
+
+# -------------- Diffusion ------------- #
+
+include msd.in
+
+timestep ?timestep?
+velocity all create ?temp? ?vel_seed? mom yes
+
+fix nve all nve
+fix lang all langevin ?temp? ?temp? ?Tdamp? ?lang_seed?
+fix mom all momentum 1000 linear 1 1 1
+
+dump dif all custom ?snapshot? diffusion.dump id type x y z
+dump_modify 1 append yes
+
+run ?diffusion?
+
+# --------- Minimize snapshots --------- #
+
+unfix nve
+unfix lang
+unfix mom
+undump dif
+
+log minimize.log
+thermo_style custom step pe
+thermo 10
+
+neigh_modify every 1 delay 0 check yes
+
+label loop
+
+variable tstep_idx loop ?num_snapshots?
+variable tstep equal ${tstep_idx}*?snapshot?
+
+print "Timestep idx: ${tstep_idx}"
+print "Timestep: ${tstep}"
+
+read_dump diffusion.dump ${tstep} x y z replace yes
+
+reset_timestep 0
+
+minimize ?etol? ?ftol? ?maxiter? ?maxeval?
+
+reset_timestep ${tstep}
+write_dump all custom quench.dump id type x y z modify append yes
+
+next tstep_idx
+
+jump SELF loop

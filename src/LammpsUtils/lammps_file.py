@@ -536,7 +536,7 @@ class LmpDump(LmpFile):
         struct.write_to_file(write_path)
 
     def to_struct(self, lattice_params: dict, timestep = None):
-        """Instantiate a LmpStructure object using dump data at a given timestep."""
+        """Instantiate a LmpStructure object using dump data at a given timestep (lattice_params = size, lattice, composition_str)."""
         # determine frame to pull data from
         if timestep is None:
             timestep = list(self.frames.keys())[-1]

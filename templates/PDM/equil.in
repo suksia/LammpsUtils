@@ -1,0 +1,52 @@
+units metal
+atom_style atomic
+boundary p p p
+
+read_data config.in
+
+pair_style ?pair_style?
+pair_coeff * * ?potential? ?elements?
+
+neighbor ?skin? bin
+neigh_modify every 1 delay 0 check yes
+
+# -------- Energy minimize (0K) -------- #
+
+thermo_style custom step pe press vol
+thermo 10
+
+fix min all box/relax iso 0.0
+min_style cg
+minimize ?etol? ?ftol? ?maxiter? ?maxeval?
+
+unfix min
+
+# ------------- Equilibrate ------------ #
+
+neigh_modify delay 10
+
+timestep ?timestep?
+velocity all create ?temp? ?vel_seed? mom yes
+
+fix equil all npt temp ?temp? ?temp? ?Tdamp? iso 0.0 0.0 ?Pdamp?
+fix mom all momentum 1000 linear 1 1 1
+
+thermo_style custom step etotal temp press vol
+thermo 100
+
+run ?equil?
+
+unfix equil
+
+# --------- Energy minimize (T) -------- #
+
+neigh_modify every 1 delay 0 check yes
+
+thermo_style custom step pe press vol
+thermo 10
+
+minimize ?etol? ?ftol? ?maxiter? ?maxeval?
+
+reset_timestep 0
+
+write_dump all custom quench.dump id type x y z

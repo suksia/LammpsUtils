@@ -237,16 +237,16 @@ Acronym: **P**oint **D**efect **M**igration
 
 This study inserts a point defect into a configuration and runs an MD loop to allow for diffusion via defect migration. Diffusion is evaluated using the mean squared displacement (MSD), where the squared displacement $|\mathbf{r}(t)-\mathbf{r}_0|^2$ is computed for every particle in a given group at some time $t$, and then averaged over all particles. $$\text{MSD} = \langle |\mathbf{r}(t)-\mathbf{r}_0|^2\rangle$$ The quality of MSD statistics stems from the number of particles used to compute the average, so for individual point defects many different configurations must be used. Similarly, the amount of mass diffusion is small as it can only proceed via the migration of individual point defects, so even the diffusion of alloy species must be averaged over many different configurations.
 
-If an MSD curve is typical, in that a linear regime exists corresponding to steady-state diffusion (Brownian motion), a straight line can be fit which has the slope $6D$, where $D$ is the diffusivity. Futhermore, an effective point defect migration energy $E_m$ can be obtained from $$D(T) = D_0\exp\left(-\frac{E_m}{k_\text{B}T}\right),$$ which requires computing the diffusivity at multiple temperatures and fitting a straight line to the plot of $\ln D(T) = a/T + b$, where $a=-E_m/k_\text{B}$.  
+If an MSD curve is typical, in that a linear regime exists corresponding to steady-state diffusion (Brownian motion), a straight line can be fit which has the slope $6D$, where $D$ is the diffusivity. Futhermore, an effective point defect migration energy $E_m$ can be obtained from $$D(T) = D_0\exp\left(-\frac{E_m}{k_\text{B}T}\right),$$ which requires computing the diffusivity at multiple temperatures and fitting a straight line to the plot of $\ln D(T) = a/T + b$, where $a=-E_m/k_\text{B}$.
 
 ### Workflow
 
 1. Sample a random, separated, or B2 ordered configuration, or load one from a dataset
-2. Insert a point defect on the lattice site closest to the center of the simulation box
-3. Minimize to 0K
-4. Equilibrate with NPT to desired temperature
+2. Minimize to 0K
+3. Equilibrate with NPT to desired temperature
+4. Minimize at temperature and insert a point defect on the lattice site closest to the center 
 5. Run diffusion with NVT
-6. Minimize snapshots captured between jumps to remove thermal displacements
+6. Minimize snapshots captured between jumps to remove thermal displacement
 7. Analyze snapshots with Wigner-Seitz analysis to obtain point defect trajectory
 8. Repeat 1-7 for many configurations
 9. Compute mean squared displacement for the point defect and each alloy species over all configurations
@@ -362,3 +362,5 @@ pe_thresh: <potential energy threshold for each species as a list so that only d
 ## Notes
 
 1. When restarting a simulation, the new input parameters are used even if they conflict with the previous ones. Care must be taken to avoid potential conflicts by only changing parameters delibrately. For example, if one ran a study with 25 members then restarted with 12, only those first 12 members will be included in the analysis. Also keep in mind that simulation results are only updated if the member ID is not included in the restart file.
+
+2. For the B2 ordered binary mixture, the sublattices can be flipped by swapping the order of the elements in the `composition` parameter.

@@ -886,6 +886,8 @@ class PDM(Study):
             num_fps, num_req_configs = len(dataset_configs_fps), len(self.sim_ids)*self.input_yml['members']
             if num_fps < num_req_configs:
                 raise ValueError(f"Dataset does not contain enough configurations (found {num_fps}, needed {num_req_configs})")
+        else:
+            self.params['size'] = [self.input_yml['size']]*3
 
         # update global params (instantaneous values subject to change) common to all members/configurations
         self.params.update({
@@ -900,15 +902,17 @@ class PDM(Study):
             'diffusion': unprefix(self.input_yml['diffusion']),
             'snapshot': unprefix(self.input_yml['snapshot'])})
 
+        self.params['num_snapshots'] = int(self.params['diffusion'] / self.params['snapshot'])
+
         # define defect parameters
         if self.input_yml['defect'] == 'vac':
-            def_type = 'vac'
-            def_species = None
-            def_orientation = None
+            self.params['def_type'] = 'vac'
+            self.params['def_species'] = None
+            self.params['def_orientation'] = None
         else:
-            def_type = self.input_yml['int_type']
-            def_species = self.input_yml['int_species']
-            def_orientation = str(self.input_yml['int_orient'])
+            self.params['def_type'] = self.input_yml['int_type']
+            self.params['def_species'] = self.input_yml['int_species']
+            self.params['def_orientation'] = str(self.input_yml['int_orient'])
 
         # define groups and MSD computes for LAMMPS
         msd_in_lines = ''
@@ -929,7 +933,7 @@ class PDM(Study):
         # seeds for velocity and thermostat for each configuration (temperature, member)
         seeds = create_seeds(2*len(self.sim_ids)*self.params['members'])
 
-        # define input files and insert point defects
+        # define input files
         for temp_i, temp in enumerate(self.sim_ids):
             for mem_i in range(self.input_yml['members']):
                 seed_i = temp_i*self.params['members'] + 2*mem_i
@@ -938,11 +942,16 @@ class PDM(Study):
                     'vel_seed': seeds[seed_i],
                     'lang_seed': seeds[seed_i+1]})
 
-                main_in = LmpInput(file_path=self.templates_dir/'main.in')
-                main_in.add_params(self.params)
+                equil_in = LmpInput(file_path=self.templates_dir/'equil.in')
+                equil_in.add_params(self.params)
+                
+                diffusion_in = LmpInput(file_path=self.templates_dir/'diffusion.in')
+                diffusion_in.add_params(self.params)
 
                 msd_in = LmpInput(content_str=msd_in_lines)
                 msd_in.add_params(self.params)
+                for line_i in range(len(msd_in.lines)):
+                    msd_in.lines[line_i] += '\n'
 
                 if 'dataset' in self.input_yml.keys():
                     config_i = temp_i*len(self.input_yml['members']) + mem_i
@@ -950,25 +959,49 @@ class PDM(Study):
                 else:
                     config_in = LmpStructure(lattice_params=self.params)
 
-                config_in.insert_point_defect(def_type, def_species, def_orientation)
-
                 self.state[temp][mem_i]['input_files'].update({
-                    'main.in': main_in,
+                    'equil.in': equil_in,
+                    'diffusion.in': diffusion_in,
                     'msd.in': msd_in,
                     'config.in': config_in})
+
+        # define lattice parameters dictionary for dump->struct conversion
+        self.lattice_params = {
+            'size': config_in.size,
+            'lattice': config_in.lattice,
+            'composition_str': config_in.composition_str
+        }
 
     def build_directory(self):
         self.dir.mkdir(exist_ok=True)
 
         # directories for each temp since each will be analyzed
         for temp in self.sim_ids:
-            temp_dir: Path = self.dir / temp
+            temp_dir: Path = self.dir / str(temp)
             temp_dir.mkdir(exist_ok=True)
 
             for mem_i in range(self.input_yml['members']):
                 mem_dir = temp_dir / str(mem_i)
                 mem_dir.mkdir(exist_ok=True)
                 self.state[temp][mem_i].update({'dir' : mem_dir})
+
+    def run_lammps(self):
+        logger.debug(f'Equilibrating...')
+        super().run_lammps(lmp_fn='equil.in')
+        
+        # add point defects to equilibrated configurations
+        logger.debug(f'Inserting point defects...')
+        for temp in self.sim_ids:
+            for mem_i in range(self.input_yml['members']):
+                dump = LmpDump(file_path = self.state[temp][mem_i]['dir'] / 'quench.dump')
+
+                config = dump.to_struct(self.lattice_params, timestep = 0)
+                config.insert_point_defect(self.params['def_type'], self.params['def_species'], self.params['def_orientation'])
+
+                self.state[temp][mem_i]['input_files']['config.in'] = config
+
+        logger.debug(f'Running diffusion loop...')
+        super().run_lammps(lmp_fn='diffusion.in')
     
     def analyze(self):
         pass
