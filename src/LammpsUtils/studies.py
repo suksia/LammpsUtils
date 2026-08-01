@@ -910,7 +910,7 @@ class PDM(Study):
             self.params['def_species'] = None
             self.params['def_orientation'] = None
             self.params['db_spacing'] = None
-            
+
         elif self.input_yml['defect'] == 'int':
             self.params['def_type'] = self.input_yml['int_type']
             self.params['def_species'] = self.input_yml['int_species']
@@ -1012,10 +1012,54 @@ class PDM(Study):
         super().run_lammps(lmp_fn='diffusion.in', restart_name='diffusion')
     
     def analyze(self):
-        pass
+        # average alloy species MSD over configurations for each temp
+        self.data['sd'] = np.zeros((len(self.sim_ids), self.input_yml['members'], len(self.params['species']), self.params['num_snapshots']+1))
+
+        for temp_i, temp in enumerate(self.sim_ids):
+            for mem_i in range(self.input_yml['members']):
+                dif_log = LmpLog(file_path = self.state[temp][mem_i]['dir'] / 'diffusion.log')
+
+                for spi in range(1, len(self.params['species'])+1):
+                    self.data['sd'][temp_i, mem_i, spi-1, :] = dif_log.data_df[f'c_msd{spi}[4]']
+
+        self.data['timesteps'] = dif_log.data_df.index.to_numpy()
+        self.data['time'] = self.data['timesteps']*self.params['timestep']
+
+        self.data['msd'] = np.mean(self.data['sd'], axis=1)
+        self.data['msd_std'] = np.std(self.data['sd'], axis=1)
 
     def save_data(self):
-        pass
+        #colors = plt.cm.coolwarm()
+
+        x = self.data['time']
+
+        for temp_i, temp in enumerate(self.sim_ids):
+            fig, axs = plt.subplots(1, len(self.params['species']), figsize=(6*len(self.params['species']),7), sharey=True)
+            axs: list[plt.Axes] = axs
+
+            for spi, sp in enumerate(self.params['species']):
+                y = self.data['msd'][temp_i, spi]
+                yerr = (y - self.data['msd_std'][temp_i, spi], y + self.data['msd_std'][temp_i, spi])
+                axs[spi].plot(x, y, color='tab:blue')
+                axs[spi].fill_between(self.data['time'], yerr[0], yerr[1], alpha=0.5, color='tab:blue')
+                axs[spi].set_xlabel('Time [ps]')
+                axs[spi].set_title(sp)
+            axs[0].set_ylabel('MSD [A/ps]')
+            fig.savefig(self.dir / str(temp) / f'msd_{temp}.png', bbox_inches='tight')
+            plt.close()
+
+        fig, axs = plt.subplots(1, len(self.params['species']), figsize=(6*len(self.params['species']),7), sharey=True)
+        axs: list[plt.Axes] = axs
+
+        for spi, sp in enumerate(self.params['species']):
+            for temp_i, temp in enumerate(self.sim_ids):
+                axs[spi].plot(x, self.data['msd'][temp_i, spi], label=f'{temp}K')
+            axs[spi].set_xlabel('Time [ps]')
+            axs[spi].set_title(sp)
+            axs[spi].legend()
+        axs[0].set_ylabel('MSD [A/ps]')
+        fig.savefig(self.dir / str(temp) / f'msd.png', bbox_inches='tight')
+        plt.close()
 
 @register_study
 class CC(Study):
