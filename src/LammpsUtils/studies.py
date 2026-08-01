@@ -1028,10 +1028,12 @@ class PDM(Study):
         self.data['msd'] = np.mean(self.data['sd'], axis=1)
         self.data['msd_std'] = np.std(self.data['sd'], axis=1)
 
+        #
+
     def save_data(self):
         #colors = plt.cm.coolwarm()
 
-        x = self.data['time']
+        x = self.data['time']/1000
 
         for temp_i, temp in enumerate(self.sim_ids):
             fig, axs = plt.subplots(1, len(self.params['species']), figsize=(6*len(self.params['species']),7), sharey=True)
@@ -1042,9 +1044,9 @@ class PDM(Study):
                 yerr = (y - self.data['msd_std'][temp_i, spi], y + self.data['msd_std'][temp_i, spi])
                 axs[spi].plot(x, y, color='tab:blue')
                 axs[spi].fill_between(self.data['time'], yerr[0], yerr[1], alpha=0.5, color='tab:blue')
-                axs[spi].set_xlabel('Time [ps]')
+                axs[spi].set_xlabel('Time [ns]')
                 axs[spi].set_title(sp)
-            axs[0].set_ylabel('MSD [A/ps]')
+            axs[0].set_ylabel(r'MSD [$\AA^2$]')
             fig.savefig(self.dir / str(temp) / f'msd_{temp}.png', bbox_inches='tight')
             plt.close()
 
@@ -1054,11 +1056,11 @@ class PDM(Study):
         for spi, sp in enumerate(self.params['species']):
             for temp_i, temp in enumerate(self.sim_ids):
                 axs[spi].plot(x, self.data['msd'][temp_i, spi], label=f'{temp}K')
-            axs[spi].set_xlabel('Time [ps]')
+            axs[spi].set_xlabel('Time [ns]')
             axs[spi].set_title(sp)
             axs[spi].legend()
-        axs[0].set_ylabel('MSD [A/ps]')
-        fig.savefig(self.dir / str(temp) / f'msd.png', bbox_inches='tight')
+        axs[0].set_ylabel(r'MSD [$\AA^2$]')
+        fig.savefig(self.dir / f'msd.png', bbox_inches='tight')
         plt.close()
 
 @register_study
