@@ -292,7 +292,7 @@ defect: <vac, int>
 int_type: <crowd, db; type of interstitial structure>
 int_species: <element name of interstitial>
 int_orientation: <crystal direction indices as a string (e.g., 111 is the <111> direction)>
-int_spacing: <percentage of the lattice constant corresponding to initial spacing between atoms at interstitial lattice site>
+db_spacing: <required if int_type=db; distance between dumbbell atoms as a percentage of the lattice constant>
 ```
 
 ### Example

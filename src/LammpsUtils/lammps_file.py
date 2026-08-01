@@ -301,7 +301,7 @@ class LmpStructure(LmpFile):
 
         super().write_to_file(write_path, append_newline=True)
             
-    def insert_point_defect(self, defect_type: str, defect_species: str, defect_orientation: str, int_spacing: float = None):
+    def insert_point_defect(self, defect_type: str, defect_species: str, defect_orientation: str, db_spacing: float = None):
         """Inserts a point defect at or near the center of the supercell."""
         center = self.lattice_const*np.array(self.size)/2
         
@@ -326,26 +326,27 @@ class LmpStructure(LmpFile):
         # crowdion -> add atom between two others
         elif defect_type == 'crowd':
             if defect_orientation == '111':
-                int_pos = self.positions[ref_pos_i] + self.lattice_const*int_spacing
+                int_pos = self.positions[ref_pos_i] + self.lattice_const/4
             
-            self.ids = np.insert(self.ids, (ref_pos_i), (self.num_atoms), axis=0)
-            self.types =  np.insert(self.types, (ref_pos_i), self.species_to_type[defect_species], axis=0)
-            self.positions = np.insert(self.positions, (ref_pos_i), (int_pos), axis=0)
+            self.ids = np.append(self.ids, (self.num_atoms), axis=0)
+            self.types =  np.append(self.types, (self.species_to_type[defect_species]), axis=0)
+            self.positions = np.append(self.positions, (int_pos), axis=0)
         
             self.num_atoms += 1
 
         # dumbbell -> move reference atom over and add atom on other side
         elif defect_type == 'db':
             if defect_orientation == '100':
-                spacing = np.array([self.lattice_const*int_spacing, 0, 0])
+                dr = np.array([1, 0, 0])
             elif defect_orientation == '111':
-                spacing = np.array([self.lattice_const*int_spacing, self.lattice_const*int_spacing, self.lattice_const*int_spacing])
+                dr = np.array([1, 1, 1])
+            dr = self.lattice_const*db_spacing*dr/(2*np.linalg.norm(dr))
 
-            ref_at_pos, int_pos = self.positions[ref_pos_i] - spacing, self.positions[ref_pos_i] + spacing
+            ref_at_pos, int_pos = self.positions[ref_pos_i] - dr, self.positions[ref_pos_i] + dr
 
-            self.ids = np.insert(self.ids, (ref_pos_i), (self.num_atoms), axis=0)
-            self.types =  np.insert(self.types, (ref_pos_i), self.species_to_type[defect_species], axis=0)
-            self.positions = np.insert(self.positions, (ref_pos_i), (int_pos), axis=0)
+            self.ids = np.append(self.ids, (self.num_atoms), axis=0)
+            self.types = np.append(self.types, (self.species_to_type[defect_species]), axis=0)
+            self.positions = np.append(self.positions, (int_pos), axis=0)
             self.positions[ref_pos_i] = ref_at_pos
 
             self.num_atoms += 1
