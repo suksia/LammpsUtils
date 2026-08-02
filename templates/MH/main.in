@@ -1,0 +1,6 @@
+# run equilibration for each system (defined automatically like below)
+
+include W.in
+include Mo.in
+include V.in
+include mixture.in

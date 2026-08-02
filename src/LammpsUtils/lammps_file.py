@@ -52,7 +52,7 @@ class LmpInput(LmpFile):
                 self.lines[i] = re.sub(f'\?{kw}\?', str(val), line)
                 
 class LmpStructure(LmpFile):
-    """Input structure data file for LAMMPS which is a randomized bcc/fcc lattice of elements."""
+    """Input structure data file for LAMMPS which is a randomized bcc/fcc lattice of elements (lattice_params = lattice, lattice_const, size, order, composition)."""
     def __init__(self, file_path: Path = None, lattice_params: dict = None):
         # attributes required to fully define the structure
         self.ids: np.ndarray = None
@@ -172,8 +172,13 @@ class LmpStructure(LmpFile):
         rng = np.random.default_rng()
         rand_pos_idx = rng.permutation(self.num_atoms)
 
+        # single component -> decorate all sites with the same type
+        if len(self.composition) == 1:
+            sp, sp_type = next(iter(self.composition.items()))
+            self.types = np.full(self.num_atoms, sp_type)
+
         # random -> randomly decorate sites with different types
-        if params['order'] == 'random':
+        elif params['order'] == 'random':
             i = 0
             for el, n_at in at_composition.items():
                 for j in range(n_at):
@@ -195,10 +200,14 @@ class LmpStructure(LmpFile):
 
             # B2 -> checkerboard pattern (interpenetrating sc sublattices)
             if params['order'] == 'B2':
+                num_solute_placed = 0
                 for i in rand_pos_idx:
                     pos = self.positions[i]
-                    if any(pos % 1):
+                    if num_solute_placed == at_composition[solute_sp]:
+                        break
+                    elif any(pos % 1):
                         self.types[i] = solute_type
+                        num_solute_placed += 1
 
             # separated -> sphere of solute in middle (precipitate)
             elif params['order'] == 'separated':

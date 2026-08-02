@@ -32,11 +32,14 @@ write_dump pka custom pka.dump id type x y z
 
 log equil.log
 
-thermo_style custom step pe
+thermo_style custom step pe press vol
 thermo 1
 
+fix min all box/relax iso 0.0
 min_style cg
 minimize ?etol? ?ftol? ?maxiter? ?maxeval?
+
+unfix min
 
 reset_timestep 0
 
@@ -100,7 +103,7 @@ write_dump all custom final.dump id type x y z
 # ----- quench reference and post-cascade cells ----- #
 
 log minimize.log
-thermo_style custom step pe press
+thermo_style custom step pe press vol
 thermo 1
 
 read_dump reference.dump 0 id type x y z replace yes

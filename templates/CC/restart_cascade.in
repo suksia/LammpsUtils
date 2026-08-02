@@ -56,6 +56,9 @@ write_dump all custom cascade_?cascade_idx?.dump id type x y z
 
 # ----- quench post-cascade cells ----- #
 
+thermo_style custom step pe press vol
+thermo 1
+
 log minimize.log
 minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 

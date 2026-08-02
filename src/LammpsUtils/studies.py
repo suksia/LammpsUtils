@@ -4,6 +4,7 @@ from pathlib import Path
 from LammpsUtils.lammps_file import *
 from LammpsUtils.utils import *
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 import numpy as np
 from ovito.modifiers import WignerSeitzAnalysisModifier
 from ovito.io import import_file, export_file
@@ -556,6 +557,119 @@ class REPT(Study):
         raise NotImplementedError
 
 @register_study
+class MH(Study):
+    def init_state(self):
+        # setup containers
+        self.sim_ids = self.input_yml['temperature']
+        if type(self.input_yml['temperature']) != list:
+            self.sim_ids = [self.input_yml['temperature']]
+
+        for temp in self.sim_ids:
+            self.state.update({temp: {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}})
+            self.state_params.update({temp: {mem_i: {} for mem_i in range(self.params['members'])}})
+
+        # load configs from a dataset if possible
+        if 'dataset' in self.input_yml.keys():
+            raise NotImplementedError()
+
+        self.params.update({
+            'size': [[size]*3 for size in self.input_yml['size']],
+            'species': list(self.input_yml['composition'].keys()),
+            'equil': unprefix(self.input_yml['equil']),
+            'etol': f"{self.input_yml['minimize'][0]:.2e}",
+            'ftol': f"{self.input_yml['minimize'][1]:.2e}",
+            'maxiter': unprefix(self.input_yml['minimize'][2]),
+            'maxeval': unprefix(self.input_yml['minimize'][3]),
+            'thermo': unprefix(self.input_yml['thermo']),
+            'time_avg': unprefix(self.input_yml['time_avg'])})
+
+        # for dividing enthalpy ensemble averages
+        self.params.update({'num_atoms': {sp: None for sp in self.params['species']}})
+
+        # seed for each configuration (pure and mix for each temperature and member)
+        seeds = create_seeds((len(self.params['species'])+1)*len(self.sim_ids)*self.params['members'])
+
+        # define main input file as list of includes
+        main_in_lines = ''
+        for spi, sp in self.params['species']:
+            main_in_lines += f'include {sp}.in\n'
+        main_in_lines += 'include mixture.in'
+
+        for temp_i, temp in enumerate(self.sim_ids):
+            for mem_i in range(self.input_yml['members']):
+                self.params['temp'] = temp
+                seed_i = temp_i*self.params['members'] + mem_i
+
+                # input files for each pure species
+                for spi, sp in self.params['species']:
+                    lattice_params = {
+                       'lattice': self.params['lattice'][spi],
+                       'lattice_const': self.params['lattice_const'][spi],
+                       'size': self.params['size'][spi],
+                       'order': None,
+                       'composition': {sp: 100}}
+
+                    self.params.update({
+                        'config_fn': f'{sp}.struct',
+                        'vel_seed': seeds[seed_i+spi],
+                        'elements': sp,
+                        'log_fn': f'{sp}.log'})
+
+                    sp_equil_in = LmpInput(file_path=self.templates_dir/'equil.in')
+                    sp_equil_in.add_params(self.params)
+                    
+                    sp_struct_in = LmpStructure(lattice_params=lattice_params)
+                    self.params['num_atoms'][sp] = sp_struct_in.num_atoms
+
+                    self.state[temp][mem_i]['input_files'].update({
+                        f'{sp}.in': sp_equil_in,
+                        f'{sp}.struct': sp_struct_in})
+
+                # input files for mixture
+                lattice_params = {
+                    'lattice': self.params['lattice'][-1],
+                    'lattice_const': self.params['lattice_const'][-1],
+                    'size': self.params['size'][-1],
+                    'order': self.params['order'],
+                    'composition': self.params['composition']}
+
+                self.params.update({
+                    'config_fn': f'mixture.struct',
+                    'vel_seed': seeds[seed_i + len(self.params['species'])],
+                    'elements': tilps(list(self.params['composition'].keys())),
+                    'log_fn': f'mixture.log'})
+
+                mix_equil_in = LmpInput(file_path=self.templates_dir/'equil.in')
+                mix_equil_in.add_params(self.params)
+
+                mix_struct_in = LmpStructure(lattice_params=lattice_params)
+                self.params['num_atoms'].update({'mix': mix_struct_in.num_atoms})
+
+                main_in = LmpInput(content_str=main_in_lines)
+                for line_i in range(len(main_in.lines)):
+                    main_in.lines[line_i] += '\n'
+
+                self.state[temp][mem_i]['input_files'].update({
+                    'mixture.in': mix_equil_in,
+                    'mixture.struct': sp_struct_in,
+                    'main.in': main_in})
+
+    def build_directory(self):
+        self.dir.mkdir(exist_ok=True)
+        
+        for temp in self.sim_ids:
+            temp_dir: Path = self.dir / str(temp)
+            temp_dir.mkdir(exist_ok=True)
+
+            for mem_i in range(self.input_yml['members']):
+                mem_dir = temp_dir / str(mem_i)
+                mem_dir.mkdir(exist_ok=True)
+                self.state[temp][mem_i].update({'dir' : mem_dir})
+
+    def analyze(self):
+        pass
+
+@register_study
 class ODT(Study):
     def init_state(self):
         Tmin, Tmax, Ntemps = self.input_yml['temperature']
@@ -716,7 +830,7 @@ class ODT(Study):
             f.write(f"{'Temperature':<20} {'dh':<20} {'Ts':<20} {'dg'}\n")
             for temp_i, temp in enumerate(self.sim_ids):
                 f.write(f"{temp:<20} {self.data['delta_enthalpy'][temp_i]:<20.3f} {self.data['random_TS'][temp_i]:<20.3f} {self.data['delta_free'][temp_i]:<20.3f}\n")
-        
+
 @register_study
 class PDI(Study):
     def init_state(self):
@@ -1521,7 +1635,7 @@ class CC(Study):
             axs1_2.legend()
         axs[1].set_xlabel('Number of Cascades')
         axs[1].set_title('Interstitials')
-        axs[1].set_xticks(x)
+        axs[1].xaxis.set_major_locator(MaxNLocator(integer=True))
 
         fig.savefig(self.dir / 'defects.png', bbox_inches='tight')
         plt.close()
@@ -1572,7 +1686,7 @@ class CC(Study):
                 axs[-1].axhline(0, color='black', ls='--')
                 axs[-1].set_xlabel('Number of Cascades')
                 axs[-1].set_ylabel('Warren-Cowley Parameter')
-                axs[-1].set_xticks(x)
+                axs[-1].xaxis.set_major_locator(MaxNLocator(integer=True))
                 axs[-1].legend()
         
         fig.savefig(self.dir/f'wc.png', bbox_inches="tight")

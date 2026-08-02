@@ -112,7 +112,7 @@ def warren_cowley(num_neighbors: int, shell_radii: list[float], positions: np.nd
     position_tree = cKDTree(positions, boxsize=boxsize)
 
     # apply translations to query positions
-    if query_pos is not None:
+    if query is not None:
         query_pos = (query[0] - boxlo).round(decimals=4)
         unw_num_imgs = np.floor_divide(query_pos, boxsize)
         query_pos = query_pos - unw_num_imgs*boxsize
