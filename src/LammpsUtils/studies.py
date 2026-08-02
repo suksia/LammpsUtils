@@ -634,10 +634,10 @@ class MH(Study):
                     'composition': self.params['composition']}
 
                 self.params.update({
-                    'config_fn': f'mixture.struct',
+                    'config_fn': 'mixture.struct',
                     'vel_seed': seeds[seed_i + len(self.params['species'])],
                     'elements': tilps(list(self.params['composition'].keys())),
-                    'log_fn': f'mixture.log'})
+                    'log_fn': 'mixture.log'})
 
                 mix_equil_in = LmpInput(file_path=self.templates_dir/'equil.in')
                 mix_equil_in.add_params(self.params)
@@ -689,18 +689,22 @@ class MH(Study):
         self.data['time_avg_enthalpy'] = np.mean(self.data['enthalpy_mean'][:, :, time_avg_mask], axis=2)
         self.data['time_avg_enthalpy_std'] = np.std(self.data['enthalpy_mean'][:, :, time_avg_mask], axis=2)
 
-        for spi, sp in enumerate(self.params['species']):
-            self.data['time_avg_enthalpy'][:, spi] /= self.params['num_atoms'][sp]
-            self.data['time_avg_enthalpy_std'][:, spi] /= self.params['num_atoms'][sp]
-        self.data['time_avg_enthalpy'][:, -1] /= self.params['num_atoms']['mix']
-        self.data['time_avg_enthalpy_std'][:, -1] /= self.params['num_atoms']['mix']
+        # intensive versions
+        self.data['int_time_avg_enthalpy'] = np.copy(self.data['time_avg_enthalpy'])
+        self.data['int_time_avg_enthalpy_std'] = np.copy(self.data['time_avg_enthalpy_std'])
 
-        self.data['mixing_enthalpy'] = self.data['time_avg_enthalpy'][:, -1]
-        self.data['mixing_enthalpy_std'] = np.square(self.data['time_avg_enthalpy'][:, -1])
+        for spi, sp in enumerate(self.params['species']):
+            self.data['int_time_avg_enthalpy'][:, spi] /= self.params['num_atoms'][sp]
+            self.data['int_time_avg_enthalpy_std'][:, spi] /= self.params['num_atoms'][sp]
+        self.data['int_time_avg_enthalpy'][:, -1] /= self.params['num_atoms']['mix']
+        self.data['int_time_avg_enthalpy_std'][:, -1] /= self.params['num_atoms']['mix']
+
+        self.data['mixing_enthalpy'] = self.data['int_time_avg_enthalpy'][:, -1]
+        self.data['mixing_enthalpy_std'] = np.square(self.data['int_time_avg_enthalpy'][:, -1])
         for spi, sp in enumerate(self.params['species']):
             atp = self.params['composition'][sp]/100
-            self.data['mixing_enthalpy'] -= atp*self.data['time_avg_enthalpy'][:, spi]
-            self.data['mixing_enthalpy_std'] += np.square(atp*self.data['time_avg_enthalpy_std'][:, spi])
+            self.data['mixing_enthalpy'] -= atp*self.data['int_time_avg_enthalpy'][:, spi]
+            self.data['mixing_enthalpy_std'] += np.square(atp*self.data['int_time_avg_enthalpy_std'][:, spi])
         self.data['mixing_enthalpy_std'] = np.sqrt(self.data['mixing_enthalpy_std'])
 
     def save_data(self):
