@@ -174,7 +174,7 @@ class LmpStructure(LmpFile):
 
         # single component -> decorate all sites with the same type
         if len(self.composition) == 1:
-            sp, sp_type = next(iter(self.composition.items()))
+            sp, sp_type = next(iter(self.species_to_type.items()))
             self.types = np.full(self.num_atoms, sp_type)
 
         # random -> randomly decorate sites with different types
