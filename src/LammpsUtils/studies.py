@@ -591,7 +591,7 @@ class MH(Study):
 
         # define main input file as list of includes
         main_in_lines = ''
-        for spi, sp in self.params['species']:
+        for spi, sp in enumerate(self.params['species']):
             main_in_lines += f'include {sp}.in\n'
         main_in_lines += 'include mixture.in'
 
@@ -601,7 +601,7 @@ class MH(Study):
                 seed_i = temp_i*self.params['members'] + mem_i
 
                 # input files for each pure species
-                for spi, sp in self.params['species']:
+                for spi, sp in enumerate(self.params['species']):
                     lattice_params = {
                        'lattice': self.params['lattice'][spi],
                        'lattice_const': self.params['lattice_const'][spi],
@@ -651,7 +651,7 @@ class MH(Study):
 
                 self.state[temp][mem_i]['input_files'].update({
                     'mixture.in': mix_equil_in,
-                    'mixture.struct': sp_struct_in,
+                    'mixture.struct': mix_struct_in,
                     'main.in': main_in})
 
     def build_directory(self):
@@ -667,7 +667,82 @@ class MH(Study):
                 self.state[temp][mem_i].update({'dir' : mem_dir})
 
     def analyze(self):
-        pass
+        enthalpy = np.zeros((len(self.sim_ids), self.input_yml['members'], len(self.params['species'])+1, round(self.params['equil']/self.params['thermo'])+1))
+
+        for temp_i, temp in enumerate(self.sim_ids):
+            for mem_i in range(self.input_yml['members']):
+                for spi, sp in enumerate(self.params['species']):
+                    sp_log = LmpLog(file_path=self.state[temp][mem_i]['dir']/f'{sp}.log')
+                    enthalpy[temp_i, mem_i, spi, :] = sp_log.data_df['Enthalpy'].to_numpy()
+
+                mix_log = LmpLog(file_path=self.state[temp][mem_i]['dir']/f'mixture.log')
+                enthalpy[temp_i, mem_i, -1, :] = mix_log.data_df['Enthalpy'].to_numpy()
+
+        self.data['timesteps'] = mix_log.data_df.index.to_numpy()
+
+        self.data['enthalpy_mean'] = np.mean(enthalpy, axis=1)
+        self.data['enthalpy_std'] = np.std(enthalpy, axis=1)
+
+        time_avg_mask = self.data['timesteps'] > (self.params['equil'] - self.params['time_avg'])
+        self.data['time_avg_timesteps'] = self.data['timesteps'][time_avg_mask]
+        
+        self.data['time_avg_enthalpy'] = np.mean(self.data['enthalpy_mean'][:, :, time_avg_mask], axis=2)
+        self.data['time_avg_enthalpy_std'] = np.std(self.data['enthalpy_mean'][:, :, time_avg_mask], axis=2)
+
+        for spi, sp in enumerate(self.params['species']):
+            self.data['time_avg_enthalpy'][:, spi] /= self.params['num_atoms'][sp]
+            self.data['time_avg_enthalpy_std'][:, spi] /= self.params['num_atoms'][sp]
+        self.data['time_avg_enthalpy'][:, -1] /= self.params['num_atoms']['mix']
+        self.data['time_avg_enthalpy_std'][:, -1] /= self.params['num_atoms']['mix']
+
+        self.data['mixing_enthalpy'] = self.data['time_avg_enthalpy'][:, -1]
+        self.data['mixing_enthalpy_std'] = np.square(self.data['time_avg_enthalpy'][:, -1])
+        for spi, sp in enumerate(self.params['species']):
+            atp = self.params['composition'][sp]/100
+            self.data['mixing_enthalpy'] -= atp*self.data['time_avg_enthalpy'][:, spi]
+            self.data['mixing_enthalpy_std'] += np.square(atp*self.data['time_avg_enthalpy_std'][:, spi])
+        self.data['mixing_enthalpy_std'] = np.sqrt(self.data['mixing_enthalpy_std'])
+
+    def save_data(self):
+        colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple'] 
+        num_figs = len(self.params['species'])+1
+
+        for temp_i, temp in enumerate(self.sim_ids):
+            fig, axs = plt.subplots(num_figs, 1, figsize=(10, num_figs*7))
+            axs: list[plt.Axes] = axs
+
+            x = self.data['timesteps']*self.input_yml['timestep']
+            x_tavg = self.data['time_avg_timesteps']*self.input_yml['timestep']
+            x0, x1 = x_tavg[0], x_tavg[-1]
+
+            for spi, sp in enumerate(self.params['species']):
+                y = self.data['enthalpy_mean'][temp_i, spi]
+                yerr = (y - self.data['enthalpy_std'][temp_i, spi], y + self.data['enthalpy_std'][temp_i, spi])
+                axs[spi].plot(x, y, color=colors[spi])
+                axs[spi].fill_between(x, yerr[0], yerr[1], alpha=0.5, color=colors[spi])
+                axs[spi].plot([x0, x1], [self.data['time_avg_enthalpy'][temp_i, spi]]*2, ls='None', marker='|', markersize=12, color='black')
+                axs[spi].plot([x0, x1], [self.data['time_avg_enthalpy'][temp_i, spi]]*2, ls='--', color='black', label=r"$\bar{H}$") # plotting line separately due to legend formatting
+                axs[spi].set_ylabel('Enthalpy [eV]')
+                axs[spi].set_title(f"{sp}")
+                axs[spi].legend()
+
+            y = self.data['enthalpy_mean'][temp_i, -1]
+            yerr = (y - self.data['enthalpy_std'][temp_i, -1], y + self.data['enthalpy_std'][temp_i, -1])
+            axs[-1].plot(x, y, color=colors[spi+1])
+            axs[-1].fill_between(x, yerr[0], yerr[1], alpha=0.5, color=colors[spi+1])
+            axs[-1].plot([x0, x1], [self.data['time_avg_enthalpy'][temp_i, -1]]*2, ls='None', marker='|', markersize=12, color='black')
+            axs[-1].plot([x0, x1], [self.data['time_avg_enthalpy'][temp_i, -1]]*2, ls='--', color='black', label=r"$\bar{H}$") # plotting line separately due to legend formatting
+            axs[-1].set_xlabel('Time [ps]')
+            axs[-1].set_ylabel('Enthalpy [eV]')
+            axs[-1].set_title("Mixture")
+            axs[-1].legend()
+
+        plt.errorbar(self.data['temperature'], self.data['mixing_enthalpy'], yerr=self.data['mixing_enthalpy_std'], fmt='-o', capsize=5, capthick=3)
+        plt.axhline(color='black', ls='--')
+        plt.xlabel('Temperature [K]')
+        plt.ylabel(r"$\Delta h = h_\text{mix} - \sum_i x_i h_i$ [meV]")
+        plt.savefig(self.dir / 'mixing_enthalpy.png', bbox_inches='tight')
+        plt.close()
 
 @register_study
 class ODT(Study):
