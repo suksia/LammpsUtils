@@ -700,12 +700,14 @@ class MH(Study):
         self.data['int_time_avg_enthalpy_std'][:, -1] /= self.params['num_atoms']['mix']
 
         self.data['mixing_enthalpy'] = self.data['int_time_avg_enthalpy'][:, -1]
-        self.data['mixing_enthalpy_std'] = np.square(self.data['int_time_avg_enthalpy'][:, -1])
+        self.data['mixing_enthalpy_std'] = np.square(self.data['int_time_avg_enthalpy_std'][:, -1])
         for spi, sp in enumerate(self.params['species']):
             atp = self.params['composition'][sp]/100
             self.data['mixing_enthalpy'] -= atp*self.data['int_time_avg_enthalpy'][:, spi]
             self.data['mixing_enthalpy_std'] += np.square(atp*self.data['int_time_avg_enthalpy_std'][:, spi])
-        self.data['mixing_enthalpy_std'] = np.sqrt(self.data['mixing_enthalpy_std'])
+
+        self.data['mixing_enthalpy'] *= 1000
+        self.data['mixing_enthalpy_std'] = 1000*np.sqrt(self.data['mixing_enthalpy_std'])
 
     def save_data(self):
         colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple'] 
@@ -743,12 +745,37 @@ class MH(Study):
             fig.savefig(self.dir / str(temp) / f'enthalpy_{temp}.png', bbox_inches='tight')        
             plt.close()
 
+        with open(self.dir / 'enthalpy.out', 'w') as f:
+            for temp_i, temp in enumerate(self.sim_ids):
+                f.write(f'Temp = {temp}\n\n')
+
+                header_line = '           '
+                for spi, sp in enumerate(self.params['species']):
+                    header_line += f"{f'H({spi})':<41} "
+                header_line += f"{'H(mix)':<41}\n"
+                f.write(header_line)
+
+                for step_i in range(len(self.data['timesteps'])):
+                    next_line = f"{self.data['timesteps'][step_i]:<10} "
+
+                    for spi in range(len(self.params['species'])+1):
+                        next_line += f"{self.data['enthalpy_mean'][temp_i, spi, step_i]:<20.2f} {self.data['enthalpy_std'][temp_i, spi, step_i]:<20.2f} "
+
+                    f.write(next_line + '\n')
+                
+                f.write('\n\n')
+
         plt.errorbar(self.sim_ids, self.data['mixing_enthalpy'], yerr=self.data['mixing_enthalpy_std'], fmt='-o', capsize=5, capthick=3)
         plt.axhline(color='black', ls='--')
         plt.xlabel('Temperature [K]')
         plt.ylabel(r"$\Delta h = h_\text{mix} - \sum_i x_i h_i$ [meV]")
         plt.savefig(self.dir / 'mixing_enthalpy.png', bbox_inches='tight')
         plt.close()
+
+        with open(self.dir / 'mixing_enthalpy.out', 'w') as f:
+            f.write(f"{'Temperature':<20} {'dh':<41}\n")
+            for temp_i, temp in enumerate(self.sim_ids):
+                f.write(f"{temp:<20} {self.data['mixing_enthalpy'][temp_i]:<20.3f} {self.data['mixing_enthalpy_std'][temp_i]:<20.3f}\n")
 
 @register_study
 class ODT(Study):
