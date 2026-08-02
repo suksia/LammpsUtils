@@ -740,8 +740,10 @@ class MH(Study):
             axs[-1].set_ylabel('Enthalpy [eV]')
             axs[-1].set_title("Mixture")
             axs[-1].legend()
+            fig.savefig(self.dir / str(temp) / f'enthalpy_{temp}.png', bbox_inches='tight')        
+            plt.close()
 
-        plt.errorbar(self.data['temperature'], self.data['mixing_enthalpy'], yerr=self.data['mixing_enthalpy_std'], fmt='-o', capsize=5, capthick=3)
+        plt.errorbar(self.sim_ids, self.data['mixing_enthalpy'], yerr=self.data['mixing_enthalpy_std'], fmt='-o', capsize=5, capthick=3)
         plt.axhline(color='black', ls='--')
         plt.xlabel('Temperature [K]')
         plt.ylabel(r"$\Delta h = h_\text{mix} - \sum_i x_i h_i$ [meV]")
