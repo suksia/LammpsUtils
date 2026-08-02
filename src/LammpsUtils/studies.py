@@ -751,7 +751,7 @@ class MH(Study):
 
                 header_line = '           '
                 for spi, sp in enumerate(self.params['species']):
-                    header_line += f"{f'H({spi})':<41} "
+                    header_line += f"{f'H({sp})':<41} "
                 header_line += f"{'H(mix)':<41}\n"
                 f.write(header_line)
 
@@ -935,9 +935,15 @@ class ODT(Study):
         plt.close()
 
         with open(self.dir / 'free_energy.out', 'w') as f:
-            f.write(f"{'Temperature':<20} {'dh':<20} {'Ts':<20} {'dg'}\n")
+            f.write(f"{'Temperature':<20} {'dh':<41} {'Ts':<20} {'dg'}\n")
             for temp_i, temp in enumerate(self.sim_ids):
-                f.write(f"{temp:<20} {self.data['delta_enthalpy'][temp_i]:<20.3f} {self.data['random_TS'][temp_i]:<20.3f} {self.data['delta_free'][temp_i]:<20.3f}\n")
+                dh = self.data['delta_enthalpy'][temp_i]
+                dh_std = self.data['delta_enthalpy'][temp_i]
+
+                dg = self.data['delta_free'][temp_i]
+                dg_std = self.data['delta_free'][temp_i]
+
+                f.write(f"{temp:<20} {dh:<20.3f} {dh_std:<20.3f} {self.data['random_TS'][temp_i]:<20.3f} {dg:<20.3f} {dg_std:<20.3f}\n")
 
 @register_study
 class PDI(Study):
@@ -1729,7 +1735,7 @@ class CC(Study):
         axs[0].set_xlabel('Number of Cascades')
         axs[0].set_ylabel('Number of Defective WS Cells')
         axs[0].set_title('Vacancies')
-        axs[0].set_xticks(x)
+        axs[0].xaxis.set_major_locator(MaxNLocator(integer=True))
 
         # interstitials
         y = self.data['num_int_mean']
