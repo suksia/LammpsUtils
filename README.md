@@ -1,4 +1,4 @@
-This package supports research on concentrated alloys conducted by the RDMAP research group within the Penn State Nuclear Engineering department.
+This package supports research on concentrated alloys conducted by the RDMAP research group within the Penn State Nuclear Engineering department. The scope has been limited to body-centered cubic (bcc) metallic systems, and has been tested on W-Mo and W-V binaries.
 
 Three study classes are currently available: `MCMD` for evaluating short range order (SRO) in bcc refractory alloys, `PDI` for evaluating the distribution of point defect insertion energies due to variations in the local chemical environment, and `SCC` for creating single collision cascades to evaluate material damage performance and ballistic mixing. 
 

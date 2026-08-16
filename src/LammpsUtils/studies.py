@@ -1256,10 +1256,67 @@ class PDM(Study):
         self.data['msd'] = np.mean(self.data['sd'], axis=1)
         self.data['msd_std'] = np.std(self.data['sd'], axis=1)
 
-        #
+        # construct point defect trajectory
+        self.data['def_pos'] = np.zeros((len(self.sim_ids), self.input_yml['members'], self.params['num_snapshots']))
+        self.data['def_pos_unw'] = np.zeros((len(self.sim_ids), self.input_yml['members'], self.params['num_snapshots'], 3))
+        self.data['num_jumps'] = np.zeros((len(self.sim_ids), self.input_yml['members']))
+        self.data['num_crosses'] = np.zeros((len(self.sim_ids), self.input_yml['members'], 3))
+        self.data['def_sd'] = np.zeros((len(self.sim_ids), self.input_yml['members'], self.params['num_snapshots']+1))
 
+        for temp_i, temp in enumerate(self.sim_ids):
+            for mem_i in range(self.input_yml['members']):
+                # locate point defect
+                pipeline = import_file(self.state[temp][mem_i]['dir'] / 'quench.dump')
+                ws = WignerSeitzAnalysisModifier()
+                pipeline.modifiers.append(ws)
+    
+                def modify(frame, data):
+                    occupancies = data.particles['Occupancy']
+                    selection = occupancies != 1
+
+                    data.particles_.create_property('Selection', data=selection)
+                    data.attributes['Position'] = data.particles.positions[selection]
+                    data.attributes['BoxWidth'] = data.cell[0,0]
+
+                pipeline.modifiers.append(modify)
+                pipeline.compute()
+
+                frames = [frame for frame in pipeline.frames][1:]
+                def_pos_list = []
+                for frame_i, frame in enumerate(frames[1:]):
+                    def_pos = frame.attributes['Position']
+                    if len(def_pos) != 1:
+                        logger.debug(f"WARNING: multiple point defects found for T={temp}, member={mem_i}, frame={frame_i}")
+                    def_pos_list.append(def_pos[0])
+
+                # unwrap trajectory 
+                prev_def_pos, num_crosses, box_width = def_pos_list[0], [0]*3, frames[0].attributes['BoxWidth']
+                self.data['def_pos_unw'][temp_i, mem_i, 0] = def_pos_list[0]
+                self.data['def_sd'][temp_i, mem_i, :2] = 0.0
+
+                for frame_i, def_pos in enumerate(def_pos_list[1:]):
+                    dr = def_pos - prev_def_pos
+                    if np.linalg.norm(dr) > 0.1:
+                        self.data['num_jumps'][temp_i][mem_i] += 1
+
+                    for i in range(3):
+                        if abs(dr[i]) > 0.8*box_width:
+                            cross_dir = -sign(dr[i])
+                            num_crosses[i] += int(cross_dir)
+                        
+                        self.data['def_pos_unw'][temp_i, mem_i, frame_i] = def_pos[i] + num_crosses[i]*box_width
+
+                    prev_def_pos = def_pos
+
+                # compute squared displacement
+                for frame_i in range(1, self.params['num_snapshots']):
+                    self.data['def_sd'][temp_i, mem_i, frame_i] = np.linalg.norm(self.data['def_pos_unw'][temp_i, mem_i, frame_i] - self.data['def_pos_unw'][temp_i, mem_i, 0])**2
+
+        self.data['def_msd'] = np.mean(self.data['def_sd'], axis=1)
+        self.data['def_msd_std'] = np.std(self.data['def_sd'], axis=1)
+        
     def save_data(self):
-        #colors = plt.cm.coolwarm()
+        colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
 
         x = self.data['time']/1000
 
@@ -1289,6 +1346,27 @@ class PDM(Study):
             axs[spi].legend()
         axs[0].set_ylabel(r'MSD [$\AA^2$]')
         fig.savefig(self.dir / f'msd.png', bbox_inches='tight')
+        plt.close()
+
+        for temp_i, temp in enumerate(self.sim_ids):
+            y = self.data['def_msd'][temp_i]
+            yerr = (y - self.data['def_msd_std'][temp_i], y + self.data['def_msd_std'][temp_i])
+            plt.plot(x, y, color='tab:blue')
+            plt.fill_between(self.data['time'], yerr[0], yerr[1], alpha=0.5, color='tab:blue')
+            plt.xlabel('Time [ns]')
+            plt.ylabel(r'MSD [$\AA^2$]')
+            plt.savefig(self.dir / temp / f'def_msd.png', bbox_inches='tight')
+            plt.close()
+
+        for temp_i, temp in enumerate(self.sim_ids):
+            y = self.data['def_msd'][temp_i]
+            yerr = (y - self.data['def_msd_std'][temp_i], y + self.data['def_msd_std'][temp_i])
+            plt.plot(x, y, color=colors[temp_i], label=f'{temp}K')
+            plt.fill_between(self.data['time'], yerr[0], yerr[1], alpha=0.5, color=colors[temp_i])
+            plt.xlabel('Time [ns]')
+            plt.ylabel(r'MSD [$\AA^2$]')
+            plt.legend()
+        plt.savefig(self.dir / temp / f'def_msd.png', bbox_inches='tight')
         plt.close()
 
 @register_study
