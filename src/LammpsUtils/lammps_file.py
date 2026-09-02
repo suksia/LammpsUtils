@@ -323,15 +323,19 @@ class LmpStructure(LmpFile):
 
         # vacancy -> remove reference atom
         if defect_type == 'vac':
-            vac_at_type = self.types[ref_pos_i]
+            rem_at_type = self.types[ref_pos_i]
+            rem_at_id = self.ids[ref_pos_i]
 
             self.ids =  np.delete(self.ids, (ref_pos_i), axis=0)
             self.types =  np.delete(self.types, (ref_pos_i), axis=0)
             self.positions = np.delete(self.positions, (ref_pos_i), axis=0)
 
+            self.ids[-1] = rem_at_id # rename last ID to removed atom so list will not be broken
+            pd_info['id'].append(rem_at_id)
+
             self.num_atoms -= 1
             if len(set(self.types)) != self.num_types:
-                raise RuntimeError(f"Inserting vacancy at {self.positions[ref_pos_i]} removed the last of atom type {vac_at_type}")
+                raise RuntimeError(f"Inserting vacancy at {self.positions[ref_pos_i]} removed the last of atom type {rem_at_type}")
 
         # crowdion -> add atom between two others
         elif defect_type == 'crowd':
@@ -599,3 +603,20 @@ class LmpDump(LmpFile):
             struct.species_to_type.update({el: i})
 
         return struct
+
+    def write_dump_file(self, write_path: Path):
+        """Writes out a minimal copy using internal data rather than just using the lines. Also refreshes the lines."""
+        self.lines = []
+        for timestep, frame in self.frames.items():
+            self.lines.append("ITEM: TIMESTEP\n")
+            self.lines.append(f"{timestep}\n")
+            self.lines.append("ITEM: NUMBER OF ATOMS\n")
+            self.lines.append(f"{frame['num_atoms']}")
+            self.lines.append('ITEM: BOX BOUNDS pp pp pp')
+            self.lines.append(f"{frame['box']['xlo']} {frame['box']['xhi']}")
+            self.lines.append(f"{frame['box']['ylo']} {frame['box']['yhi']}")
+            self.lines.append(f"{frame['box']['zlo']} {frame['box']['zhi']}")
+            self.lines.append('ITEM: ATOMS id type x y z')
+            for ati in range(frame['num_atoms']):
+                self.lines.append(f"{frame['id'][ati]} {frame['type'][ati]} {frame['position'][ati, 0]} {frame['position'][ati, 1]} {frame['position'][ati, 2]}\n")
+        self.write_to_file(write_path)

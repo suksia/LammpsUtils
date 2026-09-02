@@ -1241,7 +1241,18 @@ class PDM(Study):
                 dump = LmpDump(file_path = self.state[temp][mem_i]['dir'] / 'quench.dump')
 
                 config = dump.to_struct(self.lattice_params, timestep = 0)
-                config.insert_point_defect(self.params['def_type'], self.params['def_species'], self.params['def_orientation'], db_spacing=self.params['db_spacing'])
+                pd_info = config.insert_point_defect(self.params['def_type'], self.params['def_species'], self.params['def_orientation'], db_spacing=self.params['db_spacing'])
+
+                # vacancies delete an atom, so the last atom and the removed atom must swap IDs in the dump (for Wigner-Seitz analysis)
+                if self.params['def_type'] == 'vac':
+                    rem_at_i = np.where(dump.frames[0]['id'] == pd_info['id'][0])
+                    last_at_i = len(dump.frames[0]['id'])
+
+                    dump.frames[0]['id'][[rem_at_i, last_at_i]] = dump.frames[0]['id'][[last_at_i, rem_at_i]]
+                    dump.frames[0]['type'][[rem_at_i, last_at_i]] = dump.frames[0]['type'][[last_at_i, rem_at_i]]
+                    dump.frames[0]['position'][[rem_at_i, last_at_i]] = dump.frames[0]['position'][[last_at_i, rem_at_i]]
+
+                    dump.write_dump_file(self.state[temp][mem_i]['dir'] / 'quench.dump')
 
                 self.state[temp][mem_i]['input_files']['config.in'] = config
                 self.state[temp][mem_i]['status'] = 0
