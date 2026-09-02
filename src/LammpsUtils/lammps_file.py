@@ -337,7 +337,7 @@ class LmpStructure(LmpFile):
             if defect_orientation == '111':
                 int_pos = self.positions[ref_pos_i] + self.lattice_const/4
             
-            self.ids = np.append(self.ids, [self.num_atoms], axis=0)
+            self.ids = np.append(self.ids, [self.num_atoms+1], axis=0)
             self.types =  np.append(self.types, [self.species_to_type[defect_species]], axis=0)
             self.positions = np.append(self.positions, [int_pos], axis=0)
         
@@ -353,7 +353,7 @@ class LmpStructure(LmpFile):
 
             ref_at_pos, int_pos = self.positions[ref_pos_i] - dr, self.positions[ref_pos_i] + dr
 
-            self.ids = np.append(self.ids, [self.num_atoms], axis=0)
+            self.ids = np.append(self.ids, [self.num_atoms+1], axis=0)
             self.types = np.append(self.types, [self.species_to_type[defect_species]], axis=0)
             self.positions = np.append(self.positions, [int_pos], axis=0)
             self.positions[ref_pos_i] = ref_at_pos

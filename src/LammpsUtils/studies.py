@@ -1257,7 +1257,7 @@ class PDM(Study):
         self.data['msd_std'] = np.std(self.data['sd'], axis=1)
 
         # construct point defect trajectory using one of the methods
-        if self.params['analysis'] == 'wc':
+        if self.params['analysis'] == 'ws':
             pass
         elif self.params['analysis'] == 'cna':
             pass
@@ -1366,7 +1366,7 @@ class PDM(Study):
             plt.fill_between(x[1:], yerr[0], yerr[1], alpha=0.5, color='tab:blue', where=mask)
             plt.xlabel('Time [ns]')
             plt.ylabel(r'MSD [$\AA^2$]')
-            plt.savefig(self.dir / temp / f'def_msd_{temp}.png', bbox_inches='tight')
+            plt.savefig(self.dir / str(temp) / f'def_msd_{temp}.png', bbox_inches='tight')
             plt.close()
 
         for temp_i, temp in enumerate(self.sim_ids):
