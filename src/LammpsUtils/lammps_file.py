@@ -330,7 +330,9 @@ class LmpStructure(LmpFile):
             self.types =  np.delete(self.types, (ref_pos_i), axis=0)
             self.positions = np.delete(self.positions, (ref_pos_i), axis=0)
 
-            self.ids[-1] = rem_at_id # rename last ID to removed atom so list will not be broken
+            # rename last ID to removed atom ID so list will not be broken
+            last_at_i = np.where(self.ids == len(self.ids)+1)[0][0]
+            self.ids[last_at_i] = rem_at_id
             pd_info['id'].append(rem_at_id)
 
             self.num_atoms -= 1
@@ -611,12 +613,12 @@ class LmpDump(LmpFile):
             self.lines.append("ITEM: TIMESTEP\n")
             self.lines.append(f"{timestep}\n")
             self.lines.append("ITEM: NUMBER OF ATOMS\n")
-            self.lines.append(f"{frame['num_atoms']}")
-            self.lines.append('ITEM: BOX BOUNDS pp pp pp')
-            self.lines.append(f"{frame['box']['xlo']} {frame['box']['xhi']}")
-            self.lines.append(f"{frame['box']['ylo']} {frame['box']['yhi']}")
-            self.lines.append(f"{frame['box']['zlo']} {frame['box']['zhi']}")
-            self.lines.append('ITEM: ATOMS id type x y z')
+            self.lines.append(f"{frame['num_atoms']}\n")
+            self.lines.append("ITEM: BOX BOUNDS pp pp pp\n")
+            self.lines.append(f"{frame['box']['xlo']} {frame['box']['xhi']}\n")
+            self.lines.append(f"{frame['box']['ylo']} {frame['box']['yhi']}\n")
+            self.lines.append(f"{frame['box']['zlo']} {frame['box']['zhi']}\n")
+            self.lines.append("ITEM: ATOMS id type x y z\n")
             for ati in range(frame['num_atoms']):
                 self.lines.append(f"{frame['id'][ati]} {frame['type'][ati]} {frame['position'][ati, 0]} {frame['position'][ati, 1]} {frame['position'][ati, 2]}\n")
         self.write_to_file(write_path)

@@ -1238,20 +1238,22 @@ class PDM(Study):
         logger.debug(f'Inserting point defects...')
         for temp in self.sim_ids:
             for mem_i in range(self.input_yml['members']):
+                # skip editing dump if already run
+                if temp in self.restart['diffusion'].keys():
+                    if mem_i in self.restart['diffusion'][temp]:
+                        continue
+
                 dump = LmpDump(file_path = self.state[temp][mem_i]['dir'] / 'quench.dump')
 
                 config = dump.to_struct(self.lattice_params, timestep = 0)
                 pd_info = config.insert_point_defect(self.params['def_type'], self.params['def_species'], self.params['def_orientation'], db_spacing=self.params['db_spacing'])
 
-                # vacancies delete an atom, so the last atom and the removed atom must swap IDs in the dump (for Wigner-Seitz analysis)
+                # vacancies delete an atom and this breaks velocity set and Wigner-Seitz, so instead the last atom and the removed atom can swap IDs in the reference and initial config
                 if self.params['def_type'] == 'vac':
-                    rem_at_i = np.where(dump.frames[0]['id'] == pd_info['id'][0])
-                    last_at_i = len(dump.frames[0]['id'])
+                    rem_at_i = np.where(dump.frames[0]['id'] == pd_info['id'][0])[0][0]
+                    last_at_i = np.where(dump.frames[0]['id'] == dump.frames[0]['num_atoms'])[0][0]
 
                     dump.frames[0]['id'][[rem_at_i, last_at_i]] = dump.frames[0]['id'][[last_at_i, rem_at_i]]
-                    dump.frames[0]['type'][[rem_at_i, last_at_i]] = dump.frames[0]['type'][[last_at_i, rem_at_i]]
-                    dump.frames[0]['position'][[rem_at_i, last_at_i]] = dump.frames[0]['position'][[last_at_i, rem_at_i]]
-
                     dump.write_dump_file(self.state[temp][mem_i]['dir'] / 'quench.dump')
 
                 self.state[temp][mem_i]['input_files']['config.in'] = config
@@ -1306,9 +1308,9 @@ class PDM(Study):
                     data = pipeline.compute()
                     frames = [frame for frame in pipeline.frames]
 
-                    box = {'xlo': frame.cell.matrix[0, 3], 'xhi': frame.cell.matrix[0, 0] + frame.cell.matrix[0, 3],
-                           'ylo': frame.cell.matrix[1, 3], 'yhi': frame.cell.matrix[1, 1] + frame.cell.matrix[1, 3],
-                           'zlo': frame.cell.matrix[2, 3], 'zhi': frame.cell.matrix[2, 2] + frame.cell.matrix[2, 3]}
+                    box = {'xlo': frames[0].cell[0, 3], 'xhi': frames[0].cell[0, 0] + frames[0].cell[0, 3],
+                           'ylo': frames[0].cell[1, 3], 'yhi': frames[0].cell[1, 1] + frames[0].cell[1, 3],
+                           'zlo': frames[0].cell[2, 3], 'zhi': frames[0].cell[2, 2] + frames[0].cell[2, 3]}
                     box_width = frames[0].cell[0,0]
                     pb_thresh = self.params['pb_thresh']*box_width
 
