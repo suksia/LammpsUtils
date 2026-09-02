@@ -299,9 +299,19 @@ minimize: [1.0e-7, 0.0, 10000, 1000000]
 
 Acronym: **P**oint **D**efect **M**igration
 
-This study inserts a point defect into a configuration and runs an MD loop to allow for diffusion via defect migration. Diffusion is evaluated using the mean squared displacement (MSD), where the squared displacement $|\mathbf{r}(t)-\mathbf{r}_0|^2$ is computed for every particle in a given group at some time $t$, and then averaged over all particles. $$\text{MSD} = \langle |\mathbf{r}(t)-\mathbf{r}_0|^2\rangle$$ The quality of MSD statistics stems from the number of particles used to compute the average, so for individual point defects many different configurations must be used. Similarly, the amount of mass diffusion is small as it can only proceed via the migration of individual point defects, so even the diffusion of alloy species must be averaged over many different configurations.
+This study inserts a point defect into a configuration and runs an MD loop to allow for diffusion via defect migration. Diffusion is evaluated using mean squared displacement (MSD), where the squared displacement $||\mathbf{r}(t)-\mathbf{r}_0||^2$ is computed for every particle in a given group at some time $t$, and then averaged over all particles. $$\text{MSD}(t) = \langle ||\mathbf{r}(t)-\mathbf{r}_0||^2\rangle$$ The quality of MSD statistics depends from the number of particles used to compute the average, so for individual point defects many different configurations must be used. Similarly, the amount of mass diffusion is small as it can only proceed via the migration of individual point defects, so even the diffusion of alloy species must be averaged over many separate runs.
 
-If an MSD curve is typical, in that a linear regime exists corresponding to steady-state diffusion (Brownian motion), a straight line can be fit which has the slope $6D$, where $D$ is the diffusivity. Futhermore, an effective point defect migration energy $E_m$ can be obtained from $$D(T) = D_0\exp\left(-\frac{E_m}{k_\text{B}T}\right),$$ which requires computing the diffusivity at multiple temperatures and fitting a straight line to the plot of $\ln D(T) = a/T + b$, where $a=-E_m/k_\text{B}$.
+If an MSD curve is typical, in that a linear regime exists corresponding to steady-state diffusion (Brownian motion) exists, a straight line can be fit which has the slope $6D$, where $D$ is the diffusivity. Futhermore, an effective point defect migration energy $E_m$ can be obtained from $$D(T) = D_0\exp\left(-\frac{E_m}{k_\text{B}T}\right),$$ which requires computing the diffusivity at multiple temperatures and fitting a straight line to the plot of $\ln D(T) = a/T + b$, where $a=-E_m/k_\text{B}$.
+
+LAMMPS provides algorithms to compute the MSD for each species separately, but this is not the same as computing the MSD from a set of point defect trajectories. This is because the diffusion of atoms is only *correlated* with point defect migration. To compute the point defect diffusivity, some sort of algorithm must be used to identify and track said defect. Three methods are provided: Wigner-Seitz analysis (WS), adaptive common neighbor analysis (a-CNA), and motion tracking analysis (MT). 
+
+WS compares a fixed perfect reference lattice with a defective lattice and evaluates the occupancy of each Wigner-Seitz cell. Due to small variations in the system position and atomic migration building over a long simulation time, however, the two lattices can mismatch dramatically causing complete failure of the technique, predicting hundreds of defective cells and losing track of the actual point defect. This method does work well on dilute or pure alloys because the mismatch is typically much more minute.
+
+a-CNA evaluates a neighbor signature for each atom and compares said signature with the known signature for each lattice type (bcc, fcc, hcp). If an atom does not match the bulk lattice due to a neighboring point defect, it is typically marked as "other" or a different lattice type. Thus, it can be used to locate isolated point defects. Note, it does not isolate the point defect, but rather highlights it and all neighboring atoms. The mean position is thus used as the point defect position. This method is generally the most robust.
+
+MT uses the fact that atoms are displaced more the closer they are to a point defect. If only a single point defect exists, then the most mobile atoms correspond to the point defect migration itself. This method has the benefit of revealing the actual point defects and the species associated with them. For example, a vacancy hop is a displacement of about 5-8x larger than any other atom. A threshold is required which should be large enough to filter out all displacements other than atoms directly associated with point defect migration.
+
+Each method can be applied to the same study by setting the `analysis` tag appropriately and restarting the simulation (i.e., setting `dir` to the generated directory).
 
 ### Workflow
 
@@ -311,7 +321,7 @@ If an MSD curve is typical, in that a linear regime exists corresponding to stea
 4. Minimize at temperature and insert a point defect on the lattice site closest to the center 
 5. Run diffusion with NVT
 6. Minimize snapshots captured between jumps to remove thermal displacement
-7. Analyze snapshots with Wigner-Seitz analysis to obtain point defect trajectory
+7. Analyze snapshots to obtain point defect trajectory
 8. Repeat 1-7 for many configurations
 9. Compute mean squared displacement for the point defect and each alloy species over all configurations
 10. Fit steady state MSD curves with straight lines to obtain diffusivities
@@ -357,11 +367,13 @@ int_type: <crowd, db; type of interstitial structure>
 int_species: <element name of interstitial>
 int_orientation: <crystal direction indices as a string (e.g., 111 is the <111> direction)>
 db_spacing: <required if int_type=db; distance between dumbbell atoms as a percentage of the lattice constant>
+
+analysis: <wc, cna, mt>
+pbc_thresh: <default=0.60; required if analysis=cna or mt; threshold distance as a fraction of the box width above which indicates an atom jumping over a periodic boundary>
+mt_thresh: <default=0.33; required if analysis=mt; displacement threshold as a fraction of the lattice constant above which only point defect migration is likely>
 ```
 
 ### Example
-
-
 
 
 ## `CC`

@@ -1256,7 +1256,14 @@ class PDM(Study):
         self.data['msd'] = np.mean(self.data['sd'], axis=1)
         self.data['msd_std'] = np.std(self.data['sd'], axis=1)
 
-        # construct point defect trajectory
+        # construct point defect trajectory using one of the methods
+        if self.params['analysis'] == 'wc':
+            pass
+        elif self.params['analysis'] == 'cna':
+            pass
+        elif self.params['analysis'] == 'mt':
+            pass
+        
         self.data['def_pos'] = np.zeros((len(self.sim_ids), self.input_yml['members'], self.params['num_snapshots']))
         self.data['def_pos_unw'] = np.zeros((len(self.sim_ids), self.input_yml['members'], self.params['num_snapshots'], 3))
         self.data['num_jumps'] = np.zeros((len(self.sim_ids), self.input_yml['members']))

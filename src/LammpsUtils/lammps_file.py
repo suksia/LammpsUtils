@@ -360,8 +360,8 @@ class LmpStructure(LmpFile):
 
             self.num_atoms += 1
 
-        # velocity set command in LAMMPS requires atom IDs to be consecutive
-        self.renumber_ids()
+        # velocity set command in LAMMPS requires atom IDs to be sequential
+        self.reorder_ids()
 
         return self.positions[ref_pos_i]
 
@@ -409,9 +409,12 @@ class LmpStructure(LmpFile):
 
         return new_struct
 
-    def renumber_ids(self):
-        """Redefine atom IDs to be consecutive."""
-        self.ids = np.arange(1, len(self.ids)+1, dtype=np.int32)
+    def reorder_ids(self):
+        """Reorder atom IDs to be sequential."""
+        order = np.argsort(self.ids)
+        self.ids = self.ids[order]
+        self.types = self.types[order]
+        self.positions = self.positions[order]
 
 class LmpLog(LmpFile):
     """LAMMPS log file containing all thermo output data as a contiguous list."""
