@@ -369,8 +369,8 @@ int_orientation: <crystal direction indices as a string (e.g., 111 is the <111> 
 db_spacing: <required if int_type=db; distance between dumbbell atoms as a percentage of the lattice constant>
 
 analysis: <ws, cna, mt>
-pbc_thresh: <default=0.60; required if analysis=cna or mt; threshold distance as a fraction of the box width above which indicates an atom jumping over a periodic boundary>
-mt_thresh: <default=0.33; required if analysis=mt; displacement threshold as a fraction of the lattice constant above which only point defect migration is likely>
+pb_thresh: <default=0.6; threshold distance as a fraction of the box width where values above indicate an atom has jumped over a periodic boundary>
+mt_thresh: <default=0.3; required if analysis=mt; displacement threshold as a fraction of the lattice constant above which only point defect migration is likely>
 ```
 
 ### Example

@@ -6,7 +6,7 @@ from LammpsUtils.utils import *
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 import numpy as np
-from ovito.modifiers import WignerSeitzAnalysisModifier
+from ovito.modifiers import WignerSeitzAnalysisModifier, CommonNeighborAnalysisModifier
 from ovito.io import import_file, export_file
 
 logger = logging.getLogger('LammpsUtils')
@@ -1149,6 +1149,16 @@ class PDM(Study):
             else:
                 self.params['db_spacing'] = None
 
+        if 'analysis' not in self.input_yml.keys():
+            self.params['analysis'] == 'cna'
+
+        if 'pb_thresh' not in self.input_yml.keys():
+            self.params['pb_thresh'] = 0.6
+
+        if self.params['analysis'] == 'mt':
+            if 'mt_thresh' not in self.input_yml.keys():
+                self.params['mt_thresh'] = 0.3
+        
         # define groups and MSD computes for LAMMPS
         msd_in_lines = ''
         for spi in range(1, len(self.params['species'])+1):
@@ -1255,75 +1265,90 @@ class PDM(Study):
 
         self.data['msd'] = np.mean(self.data['sd'], axis=1)
         self.data['msd_std'] = np.std(self.data['sd'], axis=1)
-
-        # construct point defect trajectory using one of the methods
-        if self.params['analysis'] == 'ws':
-            pass
-        elif self.params['analysis'] == 'cna':
-            pass
-        elif self.params['analysis'] == 'mt':
-            pass
         
-        self.data['def_pos'] = np.zeros((len(self.sim_ids), self.input_yml['members'], self.params['num_snapshots']))
-        self.data['def_pos_unw'] = np.zeros((len(self.sim_ids), self.input_yml['members'], self.params['num_snapshots'], 3))
-        self.data['num_jumps'] = np.zeros((len(self.sim_ids), self.input_yml['members']))
-        self.data['num_crosses'] = np.zeros((len(self.sim_ids), self.input_yml['members'], 3))
+        # construct point defect trajectory
+        self.data['def_pos'] = np.zeros((len(self.sim_ids), self.input_yml['members'], self.params['num_snapshots'], 3))
         self.data['def_sd'] = np.zeros((len(self.sim_ids), self.input_yml['members'], self.params['num_snapshots']))
 
         for temp_i, temp in enumerate(self.sim_ids):
             for mem_i in range(self.input_yml['members']):
-                # locate point defect
-                pipeline = import_file(self.state[temp][mem_i]['dir'] / 'quench.dump')
-                ws = WignerSeitzAnalysisModifier()
-                pipeline.modifiers.append(ws)
-    
-                def modify(frame, data):
-                    occupancies = data.particles['Occupancy']
-                    selection = occupancies != 1
+                all_pos_unw = []
+                all_types = []
 
-                    data.particles_.create_property('Selection', data=selection)
-                    data.attributes['Position'] = data.particles.positions[selection]
-                    data.attributes['BoxWidth'] = data.cell[0,0]
+                if self.params['analysis'] == 'ws':
+                    raise NotImplementedError()
 
-                pipeline.modifiers.append(modify)
-                pipeline.compute()
+                elif self.params['analysis'] == 'cna':
+                    # step 1: perform a common neighbor analysis with OVITO
+                    pipeline = import_file(self.state[temp][mem_i]['dir'] / 'quench.dump')
 
-                frames = [frame for frame in pipeline.frames][1:]
-                def_pos_list = []
-                for frame_i, frame in enumerate(frames):
-                    def_pos = frame.attributes['Position']
-                    if len(def_pos) != 1:
-                        logger.debug(f"WARNING: multiple point defects found for T={temp}, member={mem_i}, frame={frame_i}")
-                    def_pos_list.append(def_pos[0])
+                    cna = CommonNeighborAnalysisModifier()
+                    pipeline.modifiers.append(cna)
 
-                # unwrap trajectory 
-                prev_def_pos, num_crosses, box_width = def_pos_list[0], [0]*3, frames[0].attributes['BoxWidth']
-                self.data['def_pos_unw'][temp_i, mem_i, 0] = def_pos_list[0]
+                    def struct_filter(frame, data):
+                        structures = data.particles['Structure Type']
+                        defective = structures == 0
+                        data.attributes['def_types'] = data.particles['Particle Type'][defective]
+                        data.attributes['def_positions'] = data.particles.positions[defective]
 
-                for frame_i, def_pos in enumerate(def_pos_list[1:]):
-                    frame_i += 1
-                    dr = def_pos - prev_def_pos
-                    if np.linalg.norm(dr) > 0.1:
-                        self.data['num_jumps'][temp_i, mem_i] += 1
+                    pipeline.modifiers.append(struct_filter)
+                    data = pipeline.compute()
+                    frames = [frame for frame in pipeline.frames]
 
-                    for i in range(3):
-                        if abs(dr[i]) > 0.8*box_width:
-                            cross_dir = -sign(dr[i])
-                            num_crosses[i] += int(cross_dir)
+                    box = {'xlo': frame.cell.matrix[0, 3], 'xhi': frame.cell.matrix[0, 0] + frame.cell.matrix[0, 3],
+                           'ylo': frame.cell.matrix[1, 3], 'yhi': frame.cell.matrix[1, 1] + frame.cell.matrix[1, 3],
+                           'zlo': frame.cell.matrix[2, 3], 'zhi': frame.cell.matrix[2, 2] + frame.cell.matrix[2, 3]}
+                    box_width = frames[0].cell[0,0]
+                    pb_thresh = self.params['pb_thresh']*box_width
+
+                    # step 2: unwrap trajectory of cluster
+                    mean_pos = np.zeros((len(frames)-1, 3))
+                    mean_pos[0] = np.mean(frames[1].attributes['def_positions'], axis=0)
+
+                    for frame_i, frame in zip(range(1, len(frames)), frames):
+                        types = frame.attributes['def_types']
+                        pos = frame.attributes['def_positions']
+                        pos_unw = np.copy(pos)
                         
-                        self.data['def_pos_unw'][temp_i, mem_i, frame_i, i] = def_pos[i] + num_crosses[i]*box_width
+                        dr = pos_unw - mean_pos[frame_i-1]
+                        pbc_mask = (np.abs(dr) > pb_thresh).astype('uint8')
+                    
+                        cross_dir = -np.sign(dr)
+                        pos_unw += cross_dir*pbc_mask*box_width
+                    
+                        mean_pos[frame_i] = np.mean(pos_unw, axis=0)
+                        all_pos_unw.append(np.copy(pos_unw))
+                        all_types.append(np.copy(types))
 
-                    prev_def_pos = def_pos
+                    self.data['def_pos'][temp_i, mem_i] = mean_pos
 
-                self.data[temp_i, mem_i] = np.array(num_crosses)
+                elif self.params['analysis'] == 'mt':
+                    raise NotImplementedError()
 
-                # compute squared displacement
-                for frame_i in range(1, self.params['num_snapshots']):
-                    self.data['def_sd'][temp_i, mem_i, frame_i] = np.linalg.norm(self.data['def_pos_unw'][temp_i, mem_i, frame_i] - self.data['def_pos_unw'][temp_i, mem_i, 0])**2
+                # write out dump file for visualization
+                with open(f"{self.state[temp][mem_i]['dir'] / self.params['analysis']}.dump", 'w') as f:
+                    for frame_i in range(1, self.params['num_snapshots']):
+                        f.write("ITEM: TIMESTEP\n")
+                        f.write(f"{frame_i*self.params['snapshot']}\n")
+                        f.write("ITEM: NUMBER OF ATOMS\n")
+                        f.write(f"{len(all_pos_unw)}\n")
+                        f.write("ITEM: BOX BOUNDS pp pp pp\n")
+                        f.write(f"{box['xlo']} {box['xhi']}\n")
+                        f.write(f"{box['ylo']} {box['yhi']}\n")
+                        f.write(f"{box['zlo']} {box['zhi']}\n")
+                        f.write("ITEM: ATOMS id type x y z\n")
+                        for at_i in range(len(all_pos_unw)):
+                            t = all_types[at_i]
+                            p = all_pos_unw[at_i]
+                            f.write(f"{at_i+1} {t} {p[0]} {p[1]} {p[2]}\n")
 
+                # compute SD for each member
+                self.data['def_sd'][temp_i, mem_i] = np.linalg.norm(self.data['def_pos'][temp_i, mem_i] - self.data['def_pos'][temp_i, mem_i, 0])**2
+                
+        # compute MSD for each temperature
         self.data['def_msd'] = np.mean(self.data['def_sd'], axis=1)
         self.data['def_msd_std'] = np.std(self.data['def_sd'], axis=1)
-        
+
     def save_data(self):
         colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
 

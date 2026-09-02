@@ -319,6 +319,7 @@ class LmpStructure(LmpFile):
             dist.append(np.linalg.norm(center-pos))
 
         ref_pos_i = dist.index(min(dist))
+        pd_info = {'id': [], 'pos': self.positions[ref_pos_i]}
 
         # vacancy -> remove reference atom
         if defect_type == 'vac':
@@ -331,7 +332,7 @@ class LmpStructure(LmpFile):
             self.num_atoms -= 1
             if len(set(self.types)) != self.num_types:
                 raise RuntimeError(f"Inserting vacancy at {self.positions[ref_pos_i]} removed the last of atom type {vac_at_type}")
-        
+
         # crowdion -> add atom between two others
         elif defect_type == 'crowd':
             if defect_orientation == '111':
@@ -342,6 +343,7 @@ class LmpStructure(LmpFile):
             self.positions = np.append(self.positions, [int_pos], axis=0)
         
             self.num_atoms += 1
+            pd_info['id'].append(self.num_atoms+1)
 
         # dumbbell -> move reference atom over and add atom on other side
         elif defect_type == 'db':
@@ -360,10 +362,13 @@ class LmpStructure(LmpFile):
 
             self.num_atoms += 1
 
+            pd_info['id'].append(self.ids[ref_pos_i])
+            pd_info['id'].append(self.num_atoms+1)
+
         # velocity set command in LAMMPS requires atom IDs to be sequential
         self.reorder_ids()
 
-        return self.positions[ref_pos_i]
+        return pd_info
 
     def replicate(self, new_size: list[int]):
         """Replicate the current system to create a larger system."""
