@@ -1106,7 +1106,7 @@ class PDM(Study):
         for temp in self.sim_ids:
             self.state.update({temp: {mem_i: {'input_files': {}, 'status': 0, 'dir': None} for mem_i in range(self.params['members'])}})
             self.state_params.update({temp: {mem_i: {} for mem_i in range(self.params['members'])}})
-
+    
         # obtain a randomized list of paths to configurations in the dataset
         if 'dataset' in self.input_yml.keys():
             dataset_configs_fps = self.load_configs()
@@ -1239,18 +1239,27 @@ class PDM(Study):
         for temp in self.sim_ids:
             for mem_i in range(self.input_yml['members']):
                 # skip editing dump if already run
-                if temp in self.restart['diffusion'].keys():
+                if 'diffusion' not in self.restart.keys():
+                    pass
+                elif temp in self.restart['diffusion'].keys():
                     if mem_i in self.restart['diffusion'][temp]:
                         continue
 
                 dump = LmpDump(file_path = self.state[temp][mem_i]['dir'] / 'quench.dump')
 
                 config = dump.to_struct(self.lattice_params, timestep = 0)
-                pd_info = config.insert_point_defect(self.params['def_type'], self.params['def_species'], self.params['def_orientation'], db_spacing=self.params['db_spacing'])
-
+                self.state_params[temp][mem_i]['pd_info'] = config.insert_point_defect(self.params['def_type'], self.params['def_species'], self.params['def_orientation'], db_spacing=self.params['db_spacing'])
+                
+                if 'pd_info' not in self.restart.keys():
+                    self.restart.update({'pd_info': {temp: {mem_i: deepcopy(self.state_params[temp][mem_i]['pd_info'])}}})
+                elif temp not in self.restart['pd_info'].keys():
+                    self.restart['pd_info'].update({temp: {mem_i: deepcopy(self.state_params[temp][mem_i]['pd_info'])}})
+                else:
+                    self.restart['pd_info'][temp].update({mem_i: deepcopy(self.state_params[temp][mem_i]['pd_info'])})
+                
                 # vacancies delete an atom and this breaks velocity set and Wigner-Seitz, so instead the last atom and the removed atom can swap IDs in the reference and initial config
                 if self.params['def_type'] == 'vac':
-                    rem_at_i = np.where(dump.frames[0]['id'] == pd_info['id'][0])[0][0]
+                    rem_at_i = np.where(dump.frames[0]['id'] == self.state_params[temp][mem_i]['pd_info']['id'][0])[0][0]
                     last_at_i = np.where(dump.frames[0]['id'] == dump.frames[0]['num_atoms'])[0][0]
 
                     dump.frames[0]['id'][[rem_at_i, last_at_i]] = dump.frames[0]['id'][[last_at_i, rem_at_i]]
