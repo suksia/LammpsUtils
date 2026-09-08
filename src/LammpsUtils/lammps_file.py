@@ -319,7 +319,7 @@ class LmpStructure(LmpFile):
             dist.append(np.linalg.norm(center-pos))
 
         ref_pos_i = dist.index(min(dist))
-        pd_info = {'id': [], 'pos': self.positions[ref_pos_i]}
+        pd_init_id = []
 
         # vacancy -> remove reference atom
         if defect_type == 'vac':
@@ -333,7 +333,7 @@ class LmpStructure(LmpFile):
             # rename last ID to removed atom ID so list will not be broken
             last_at_i = np.where(self.ids == len(self.ids)+1)[0][0]
             self.ids[last_at_i] = rem_at_id
-            pd_info['id'].append(rem_at_id)
+            pd_init_id.append(len(self.ids)+1)
 
             self.num_atoms -= 1
             if len(set(self.types)) != self.num_types:
@@ -349,7 +349,7 @@ class LmpStructure(LmpFile):
             self.positions = np.append(self.positions, [int_pos], axis=0)
         
             self.num_atoms += 1
-            pd_info['id'].append(self.num_atoms+1)
+            pd_init_id.append(int(self.num_atoms+1))
 
         # dumbbell -> move reference atom over and add atom on other side
         elif defect_type == 'db':
@@ -368,13 +368,13 @@ class LmpStructure(LmpFile):
 
             self.num_atoms += 1
 
-            pd_info['id'].append(self.ids[ref_pos_i])
-            pd_info['id'].append(self.num_atoms+1)
+            pd_init_id.append(int(self.ids[ref_pos_i]))
+            pd_init_id.append(int(self.num_atoms+1))
 
         # velocity set command in LAMMPS requires atom IDs to be sequential
         self.reorder_ids()
 
-        return pd_info
+        return pd_init_id
 
     def replicate(self, new_size: list[int]):
         """Replicate the current system to create a larger system."""
@@ -553,6 +553,20 @@ class LmpDump(LmpFile):
 
         # save last frame
         self.frames[timestep] = frame
+
+    def add_frame(self, struct: LmpStructure, timestep: int, data: dict = None):
+        """Generates a minimal new frame from a existing LmpStructure."""
+        if timestep not in self.frames.keys():
+            self.frames[timestep] = {
+                'num_atoms': copy(struct.num_atoms),
+                'box': deepcopy(struct.box),
+                'boxsize': deepcopy(struct.boxsize),
+                'id': np.copy(struct.ids),
+                'type': np.copy(struct.types),
+                'position': np.copy(struct.positions)}
+            self.frames[timestep] |= data
+        else:
+            raise KeyError(f"Timestep {timestep} is already an existing frame in LmpDump")
 
     def write_structure_file(self, write_path: Path, lattice_params: dict, timestep = None):
         """Generate a LAMMPS data file from the dump data at a given timestep."""

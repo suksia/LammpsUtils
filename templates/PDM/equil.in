@@ -49,4 +49,4 @@ minimize ?etol? ?ftol? ?maxiter? ?maxeval?
 
 reset_timestep 0
 
-write_dump all custom quench.dump id type x y z
+write_dump all custom reference.dump id type x y z

@@ -1241,30 +1241,37 @@ class PDM(Study):
                 # skip editing dump if already run
                 if 'diffusion' not in self.restart.keys():
                     pass
-                elif temp in self.restart['diffusion'].keys():
-                    if mem_i in self.restart['diffusion'][temp]:
+                elif str(temp) in self.restart['pd_init_id'].keys():
+                    if str(mem_i) in self.restart['pd_init_id'][str(temp)].keys():
                         continue
 
-                dump = LmpDump(file_path = self.state[temp][mem_i]['dir'] / 'quench.dump')
+                dump = LmpDump(file_path = self.state[temp][mem_i]['dir'] / 'reference.dump')
 
                 config = dump.to_struct(self.lattice_params, timestep = 0)
-                self.state_params[temp][mem_i]['pd_info'] = config.insert_point_defect(self.params['def_type'], self.params['def_species'], self.params['def_orientation'], db_spacing=self.params['db_spacing'])
-                
-                if 'pd_info' not in self.restart.keys():
-                    self.restart.update({'pd_info': {temp: {mem_i: deepcopy(self.state_params[temp][mem_i]['pd_info'])}}})
-                elif temp not in self.restart['pd_info'].keys():
-                    self.restart['pd_info'].update({temp: {mem_i: deepcopy(self.state_params[temp][mem_i]['pd_info'])}})
+                self.state_params[temp][mem_i]['pd_init_id'] = config.insert_point_defect(self.params['def_type'], self.params['def_species'], self.params['def_orientation'], db_spacing=self.params['db_spacing'])
+
+                if 'pd_init_id' not in self.restart.keys():
+                    self.restart.update({'pd_init_id': {temp: {mem_i: deepcopy(self.state_params[temp][mem_i]['pd_init_id'])}}})
+                elif temp not in self.restart['pd_init_id'].keys():
+                    self.restart['pd_init_id'].update({temp: {mem_i: deepcopy(self.state_params[temp][mem_i]['pd_init_id'])}})
                 else:
-                    self.restart['pd_info'][temp].update({mem_i: deepcopy(self.state_params[temp][mem_i]['pd_info'])})
+                    self.restart['pd_init_id'][temp].update({mem_i: deepcopy(self.state_params[temp][mem_i]['pd_init_id'])})
+
+                with open(self.dir / 'LammpsUtils.restart', 'w') as rf:
+                    json.dump(self.restart, rf)
                 
-                # vacancies delete an atom and this breaks velocity set and Wigner-Seitz, so instead the last atom and the removed atom can swap IDs in the reference and initial config
+                # vacancies delete an atom and this breaks velocity set and Wigner-Seitz
+                # instead the last atom and the removed atom can swap IDs in the reference and initial config
                 if self.params['def_type'] == 'vac':
-                    rem_at_i = np.where(dump.frames[0]['id'] == self.state_params[temp][mem_i]['pd_info']['id'][0])[0][0]
+                    rem_at_i = np.where(dump.frames[0]['id'] == self.state_params[temp][mem_i]['pd_init_id'][0])[0][0]
                     last_at_i = np.where(dump.frames[0]['id'] == dump.frames[0]['num_atoms'])[0][0]
 
                     dump.frames[0]['id'][[rem_at_i, last_at_i]] = dump.frames[0]['id'][[last_at_i, rem_at_i]]
-                    dump.write_dump_file(self.state[temp][mem_i]['dir'] / 'quench.dump')
+                    dump.frames[-1] = dump.frames.pop(0) # renumber to timestep -1
 
+                dump.add_frame(config, 0)
+                dump.write_dump_file(self.state[temp][mem_i]['dir'] / 'quench.dump')
+                
                 self.state[temp][mem_i]['input_files']['config.in'] = config
                 self.state[temp][mem_i]['status'] = 0
 
@@ -1314,7 +1321,7 @@ class PDM(Study):
                         data.attributes['def_positions'] = data.particles.positions[defective]
 
                     pipeline.modifiers.append(struct_filter)
-                    data = pipeline.compute()
+                    pipeline.compute()
                     frames = [frame for frame in pipeline.frames]
 
                     box = {'xlo': frames[0].cell[0, 3], 'xhi': frames[0].cell[0, 0] + frames[0].cell[0, 3],
@@ -1327,7 +1334,10 @@ class PDM(Study):
                     mean_pos = np.zeros((len(frames)-1, 3))
                     mean_pos[0] = np.mean(frames[1].attributes['def_positions'], axis=0)
 
-                    for frame_i, frame in zip(range(1, len(frames)), frames):
+                    all_types.append(frames[1].attributes['def_types'])
+                    all_pos_unw.append(frames[1].attributes['def_positions'])
+
+                    for frame_i, frame in zip(range(2, len(frames)), frames[2:]):
                         types = frame.attributes['def_types']
                         pos = frame.attributes['def_positions']
                         pos_unw = np.copy(pos)
@@ -1346,6 +1356,64 @@ class PDM(Study):
 
                 elif self.params['analysis'] == 'mt':
                     raise NotImplementedError()
+                    """
+                    # motion tracking for vacancies
+                    quench_dump = LmpDump(file_path="quench.dump")
+                    frames = [frame for frame in quench_dump.frames.values()]
+
+                    box = frames[0]['box']
+                    box_width = frames[0]['boxsize'][0]
+                    pb_thresh = self.params['pb_thresh']*box_width
+                    lat_param = (product(frames[0]['boxsize']) / product(self.state_params[0][mem_i]['size']))**(1/3)
+                    mt_thresh = self.params['pb_thresh']*box_width
+                    (product(frame['boxsize']) / product(lattice_params['size']))**(1/3)
+
+                    self.data['def_pos'][temp, mem_i, 0] = self.state_params['pd_info'][temp][mem_i]
+                    pd_traj[0:2] = boxsize/2
+
+                    for frame_i in range(1, len(frames)):
+                        # sort positions by atom ID
+                        atom_ids = frames[frame_i]['id']
+                        order = np.argsort(atom_ids)
+                        pos = frames[frame_i]['position'][order]
+
+                        # initialize prev_pos on first frame
+                        if frame_i == 1:
+                            prev_pos = np.copy(pos)
+                            continue
+
+                        # unwrap any atoms which have jumped the boundary
+                        pos_unw = np.copy(pos)
+                        dr = pos_unw - prev_pos # displacement vector
+                        pbc_mask = (np.abs(dr) > pbc_thresh).astype('uint8') # displacement exceeds boundary jump threshold
+
+                        cross_dir = -np.sign(dr) # direction of jump is opposite of displacement vector
+                        pos_unw += cross_dir*pbc_mask*box_width # add a box width to large components of dr
+
+                        # filter atoms by displacement
+                        dr = pos_unw - prev_pos
+                        dist = np.linalg.norm(dr, axis=1)
+                        mig_atoms = dist > vac_thresh
+
+                        if np.sum(mig_atoms):
+                            vac_i = mig_atoms.argmax()
+                            vac_traj[frame_i] = prev_pos[vac_i]
+                        else:
+                            vac_traj[frame_i] = vac_traj[frame_i-1]
+                            
+                        prev_pos = np.copy(pos_unw)
+
+                    # unwrap vacancy trajectory
+                    dump_lines = []
+                    for frame_i in range(1, len(frames)):
+                        pbc_mask = np.ones(3)
+                        while np.any(pbc_mask):
+                            dr = vac_traj[frame_i] - vac_traj[frame_i-1]
+                            pbc_mask = (np.abs(dr) > pbc_thresh).astype('uint8')
+
+                            cross_dir = -np.sign(dr)
+                            vac_traj[frame_i] += cross_dir*pbc_mask*box_width
+                    """
 
                 # write out dump file for visualization
                 with open(f"{self.state[temp][mem_i]['dir'] / self.params['analysis']}.dump", 'w') as f:
