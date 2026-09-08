@@ -554,7 +554,7 @@ class LmpDump(LmpFile):
         # save last frame
         self.frames[timestep] = frame
 
-    def add_frame(self, struct: LmpStructure, timestep: int, data: dict = None):
+    def add_frame(self, struct: LmpStructure, timestep: int, data: dict = {}):
         """Generates a minimal new frame from a existing LmpStructure."""
         if timestep not in self.frames.keys():
             self.frames[timestep] = {

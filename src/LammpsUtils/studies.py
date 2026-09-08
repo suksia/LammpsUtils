@@ -1238,13 +1238,12 @@ class PDM(Study):
         logger.debug(f'Inserting point defects...')
         for temp in self.sim_ids:
             for mem_i in range(self.input_yml['members']):
-                # skip editing dump if already run
-                if 'diffusion' not in self.restart.keys():
-                    pass
-                elif str(temp) in self.restart['pd_init_id'].keys():
-                    if str(mem_i) in self.restart['pd_init_id'][str(temp)].keys():
+                # skip editing quench.dump if diffusion has already completed
+                if str(temp) in self.restart['diffusion'].keys():
+                    if str(mem_i) in self.restart['diffusion'][str(temp)].keys():
                         continue
 
+                # insert point defect into reference and initialize quench.dump with reference (-1) and defective config (0)
                 dump = LmpDump(file_path = self.state[temp][mem_i]['dir'] / 'reference.dump')
 
                 config = dump.to_struct(self.lattice_params, timestep = 0)
@@ -1301,8 +1300,8 @@ class PDM(Study):
 
         for temp_i, temp in enumerate(self.sim_ids):
             for mem_i in range(self.input_yml['members']):
-                all_pos_unw = []
                 all_types = []
+                all_pos_unw = []
 
                 if self.params['analysis'] == 'ws':
                     raise NotImplementedError()
@@ -1342,15 +1341,15 @@ class PDM(Study):
                         pos = frame.attributes['def_positions']
                         pos_unw = np.copy(pos)
                         
-                        dr = pos_unw - mean_pos[frame_i-1]
+                        dr = pos_unw - mean_pos[frame_i-2]
                         pbc_mask = (np.abs(dr) > pb_thresh).astype('uint8')
                     
                         cross_dir = -np.sign(dr)
                         pos_unw += cross_dir*pbc_mask*box_width
                     
-                        mean_pos[frame_i] = np.mean(pos_unw, axis=0)
-                        all_pos_unw.append(np.copy(pos_unw))
+                        mean_pos[frame_i-1] = np.mean(pos_unw, axis=0)
                         all_types.append(np.copy(types))
+                        all_pos_unw.append(np.copy(pos_unw))
 
                     self.data['def_pos'][temp_i, mem_i] = mean_pos
 
@@ -1417,9 +1416,9 @@ class PDM(Study):
 
                 # write out dump file for visualization
                 with open(f"{self.state[temp][mem_i]['dir'] / self.params['analysis']}.dump", 'w') as f:
-                    for frame_i in range(self.params['num_snapshots']):
+                    for frame_i in range(self.params['num_snapshots']+1):
                         f.write("ITEM: TIMESTEP\n")
-                        f.write(f"{(frame_i+1)*self.params['snapshot']}\n")
+                        f.write(f"{frame_i*self.params['snapshot']}\n")
                         f.write("ITEM: NUMBER OF ATOMS\n")
                         f.write(f"{len(all_pos_unw[frame_i])}\n")
                         f.write("ITEM: BOX BOUNDS pp pp pp\n")
