@@ -1417,19 +1417,19 @@ class PDM(Study):
 
                 # write out dump file for visualization
                 with open(f"{self.state[temp][mem_i]['dir'] / self.params['analysis']}.dump", 'w') as f:
-                    for frame_i in range(1, self.params['num_snapshots']):
+                    for frame_i in range(self.params['num_snapshots']):
                         f.write("ITEM: TIMESTEP\n")
-                        f.write(f"{frame_i*self.params['snapshot']}\n")
+                        f.write(f"{(frame_i+1)*self.params['snapshot']}\n")
                         f.write("ITEM: NUMBER OF ATOMS\n")
-                        f.write(f"{len(all_pos_unw)}\n")
+                        f.write(f"{len(all_pos_unw[frame_i])}\n")
                         f.write("ITEM: BOX BOUNDS pp pp pp\n")
                         f.write(f"{box['xlo']} {box['xhi']}\n")
                         f.write(f"{box['ylo']} {box['yhi']}\n")
                         f.write(f"{box['zlo']} {box['zhi']}\n")
                         f.write("ITEM: ATOMS id type x y z\n")
-                        for at_i in range(len(all_pos_unw)):
-                            t = all_types[at_i]
-                            p = all_pos_unw[at_i]
+                        for at_i in range(len(all_pos_unw[frame_i])):
+                            t = all_types[frame_i][at_i]
+                            p = all_pos_unw[frame_i][at_i]
                             f.write(f"{at_i+1} {t} {p[0]} {p[1]} {p[2]}\n")
 
                 # compute SD for each member
