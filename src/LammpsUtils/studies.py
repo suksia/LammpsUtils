@@ -1239,7 +1239,9 @@ class PDM(Study):
         for temp in self.sim_ids:
             for mem_i in range(self.input_yml['members']):
                 # skip editing quench.dump if diffusion has already completed
-                if str(temp) in self.restart['diffusion'].keys():
+                if 'diffusion' not in self.restart.keys():
+                    pass
+                elif str(temp) in self.restart['diffusion'].keys():
                     if str(mem_i) in self.restart['diffusion'][str(temp)].keys():
                         continue
 
@@ -1300,11 +1302,83 @@ class PDM(Study):
 
         for temp_i, temp in enumerate(self.sim_ids):
             for mem_i in range(self.input_yml['members']):
-                all_types = []
-                all_pos_unw = []
-
                 if self.params['analysis'] == 'ws':
-                    raise NotImplementedError()
+                    # step 1: remove net lattice displacement manually
+                    quench_dump = LmpDump(file_path="quench.dump")
+                    quench_dump.sort_by_id()
+
+                    box = quench_dump.frames[0]['box']
+                    box_width = quench_dump.frames[0]['boxsize'][0]
+                    pb_thresh = self.params['pb_thresh']*box_width
+
+                    for frame_i, (timestep, frame) in enumerate(quench_dump.frames.items()):
+                        pos = frame['position']
+
+                        # skip reference frame since first frame has no displacement and the number of atoms do not match
+                        if frame_i == 0:
+                            continue
+                        if frame_i == 1:
+                            prev_pos = np.copy(pos)
+                            continue
+
+                        # unwrap any atoms which have jumped the boundary
+                        pos_unw = np.copy(pos)
+                        dr = pos_unw - prev_pos # displacement vector
+                        pbc_mask = (np.abs(dr) > pb_thresh).astype('uint8') # displacement exceeds boundary jump threshold
+                
+                        cross_dir = -np.sign(dr) # direction of jump is opposite of displacement vector
+                        pos_unw += cross_dir*pbc_mask*box_width # add a box width to large components of dr
+                
+                        # compute average displacement between frames and recenter box
+                        dr = pos_unw - prev_pos
+                        mean_dr = np.mean(dr, axis=0)
+                
+                        pos -= mean_dr
+                        pos_unw -= mean_dr
+                        prev_pos = np.copy(pos_unw)
+
+                        quench_dump.frames[timestep]['position'] = np.copy(pos)
+
+                    quench_dump.write_dump_file(self.state[temp][mem_i]['dir'] / 'ws.dump')
+
+                    # step 2: perform Wigner-Seitz analysis with OVITO                 
+                    pipeline = import_file('ws.dump')
+                    ws = WignerSeitzAnalysisModifier()
+                    pipeline.modifiers.append(ws)
+    
+                    def locate_point_defect(frame, data):
+                        occupancies = data.particles['Occupancy']
+                        selection = occupancies != 1
+                        data.particles_.create_property('Selection', data=selection)
+                        data.attributes['Position'] = data.particles.positions[selection]
+
+                    pipeline.modifiers.append(locate_point_defect)
+                    pipeline.compute()
+
+                    # step 3: unwrap point defect trajectory
+                    for frame_i, frame in enumerate(pipeline.frames):
+                        # skip first fame with no point defect
+                        if frame_i == 0:
+                            continue
+
+                        # only one WS cell should be defective
+                        if len(frame.attributes['Position']) > 1:
+                            logger.debug(f"WARNING: multiple point defects found for T={temp}, member={mem_i}, frame={frame_i}")
+
+                        pd_pos = frame.attributes['Position'][0]
+                        if frame_i == 1:
+                            pass
+                        else:
+                            pbc_mask = np.ones(3)
+                            while np.any(pbc_mask):
+                                dr = pd_pos - prev_pd_pos
+                                pbc_mask = (np.abs(dr) > pb_thresh).astype('uint8')
+                        
+                                cross_dir = -np.sign(dr)
+                                pd_pos += cross_dir*pbc_mask*box_width
+
+                        self.data['def_pos'][temp_i, mem_i, frame_i-1] = np.copy(pd_pos)
+                        prev_pd_pos = np.copy(pd_pos)
 
                 elif self.params['analysis'] == 'cna':
                     # step 1: perform a common neighbor analysis with OVITO
@@ -1333,8 +1407,8 @@ class PDM(Study):
                     mean_pos = np.zeros((len(frames)-1, 3))
                     mean_pos[0] = np.mean(frames[1].attributes['def_positions'], axis=0)
 
-                    all_types.append(frames[1].attributes['def_types'])
-                    all_pos_unw.append(frames[1].attributes['def_positions'])
+                    all_types = [frames[1].attributes['def_types']]
+                    all_pos_unw = [frames[1].attributes['def_positions']]
 
                     for frame_i, frame in zip(range(2, len(frames)), frames[2:]):
                         types = frame.attributes['def_types']
@@ -1353,86 +1427,43 @@ class PDM(Study):
 
                     self.data['def_pos'][temp_i, mem_i] = mean_pos
 
+                    # step 3: write out dump file for visualization
+                    with open(f"{self.state[temp][mem_i]['dir'] / self.params['analysis']}.dump", 'w') as f:
+                        for frame_i in range(self.params['num_snapshots']+1):
+                            f.write("ITEM: TIMESTEP\n")
+                            f.write(f"{frame_i*self.params['snapshot']}\n")
+                            f.write("ITEM: NUMBER OF ATOMS\n")
+                            f.write(f"{len(all_pos_unw[frame_i])}\n")
+                            f.write("ITEM: BOX BOUNDS pp pp pp\n")
+                            f.write(f"{box['xlo']} {box['xhi']}\n")
+                            f.write(f"{box['ylo']} {box['yhi']}\n")
+                            f.write(f"{box['zlo']} {box['zhi']}\n")
+                            f.write("ITEM: ATOMS id type x y z\n")
+                            for at_i in range(len(all_pos_unw[frame_i])):
+                                t = all_types[frame_i][at_i]
+                                p = all_pos_unw[frame_i][at_i]
+                                f.write(f"{at_i+1} {t} {p[0]} {p[1]} {p[2]}\n")
+
                 elif self.params['analysis'] == 'mt':
                     raise NotImplementedError()
-                    """
-                    # motion tracking for vacancies
-                    quench_dump = LmpDump(file_path="quench.dump")
-                    frames = [frame for frame in quench_dump.frames.values()]
 
-                    box = frames[0]['box']
-                    box_width = frames[0]['boxsize'][0]
-                    pb_thresh = self.params['pb_thresh']*box_width
-                    lat_param = (product(frames[0]['boxsize']) / product(self.state_params[0][mem_i]['size']))**(1/3)
-                    mt_thresh = self.params['pb_thresh']*box_width
-                    (product(frame['boxsize']) / product(lattice_params['size']))**(1/3)
-
-                    self.data['def_pos'][temp, mem_i, 0] = self.state_params['pd_info'][temp][mem_i]
-                    pd_traj[0:2] = boxsize/2
-
-                    for frame_i in range(1, len(frames)):
-                        # sort positions by atom ID
-                        atom_ids = frames[frame_i]['id']
-                        order = np.argsort(atom_ids)
-                        pos = frames[frame_i]['position'][order]
-
-                        # initialize prev_pos on first frame
-                        if frame_i == 1:
-                            prev_pos = np.copy(pos)
-                            continue
-
-                        # unwrap any atoms which have jumped the boundary
-                        pos_unw = np.copy(pos)
-                        dr = pos_unw - prev_pos # displacement vector
-                        pbc_mask = (np.abs(dr) > pbc_thresh).astype('uint8') # displacement exceeds boundary jump threshold
-
-                        cross_dir = -np.sign(dr) # direction of jump is opposite of displacement vector
-                        pos_unw += cross_dir*pbc_mask*box_width # add a box width to large components of dr
-
-                        # filter atoms by displacement
-                        dr = pos_unw - prev_pos
-                        dist = np.linalg.norm(dr, axis=1)
-                        mig_atoms = dist > vac_thresh
-
-                        if np.sum(mig_atoms):
-                            vac_i = mig_atoms.argmax()
-                            vac_traj[frame_i] = prev_pos[vac_i]
-                        else:
-                            vac_traj[frame_i] = vac_traj[frame_i-1]
-                            
-                        prev_pos = np.copy(pos_unw)
-
-                    # unwrap vacancy trajectory
-                    dump_lines = []
-                    for frame_i in range(1, len(frames)):
-                        pbc_mask = np.ones(3)
-                        while np.any(pbc_mask):
-                            dr = vac_traj[frame_i] - vac_traj[frame_i-1]
-                            pbc_mask = (np.abs(dr) > pbc_thresh).astype('uint8')
-
-                            cross_dir = -np.sign(dr)
-                            vac_traj[frame_i] += cross_dir*pbc_mask*box_width
-                    """
-
-                # write out dump file for visualization
-                with open(f"{self.state[temp][mem_i]['dir'] / self.params['analysis']}.dump", 'w') as f:
+                # create dump of PD trajectory
+                with open(f"{self.state[temp][mem_i]['dir'] / self.params['analysis']}_traj.dump", 'w') as f:
                     for frame_i in range(self.params['num_snapshots']+1):
+                        pd_pos = self.data['def_pos'][temp_i, mem_i, frame_i]
                         f.write("ITEM: TIMESTEP\n")
                         f.write(f"{frame_i*self.params['snapshot']}\n")
                         f.write("ITEM: NUMBER OF ATOMS\n")
-                        f.write(f"{len(all_pos_unw[frame_i])}\n")
+                        f.write("1\n")
                         f.write("ITEM: BOX BOUNDS pp pp pp\n")
                         f.write(f"{box['xlo']} {box['xhi']}\n")
                         f.write(f"{box['ylo']} {box['yhi']}\n")
                         f.write(f"{box['zlo']} {box['zhi']}\n")
                         f.write("ITEM: ATOMS id type x y z\n")
-                        for at_i in range(len(all_pos_unw[frame_i])):
-                            t = all_types[frame_i][at_i]
-                            p = all_pos_unw[frame_i][at_i]
-                            f.write(f"{at_i+1} {t} {p[0]} {p[1]} {p[2]}\n")
+                        f.write(f"1 1 {pd_pos[0]} {pd_pos[1]} {pd_pos[2]}\n")
 
                 # compute SD for each member
-                self.data['def_sd'][temp_i, mem_i] = np.linalg.norm(self.data['def_pos'][temp_i, mem_i] - self.data['def_pos'][temp_i, mem_i, 0])**2
+                self.data['def_sd'][temp_i, mem_i] = np.linalg.norm(self.data['def_pos'][temp_i, mem_i] - self.data['def_pos'][temp_i, mem_i, 0], axis=1)**2
                 
         # compute MSD for each temperature
         self.data['def_msd'] = np.mean(self.data['def_sd'], axis=1)
@@ -1440,13 +1471,12 @@ class PDM(Study):
 
     def save_data(self):
         colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
-
         x = self.data['time']/1000
 
+        # plot MSD computed by LAMMPS for each temperature
         for temp_i, temp in enumerate(self.sim_ids):
             fig, axs = plt.subplots(1, len(self.params['species']), figsize=(6*len(self.params['species']),7), sharey=True)
             axs: list[plt.Axes] = axs
-
             for spi, sp in enumerate(self.params['species']):
                 y = self.data['msd'][temp_i, spi]
                 yerr = (y - self.data['msd_std'][temp_i, spi], y + self.data['msd_std'][temp_i, spi])
@@ -1459,9 +1489,9 @@ class PDM(Study):
             fig.savefig(self.dir / str(temp) / f'msd_{temp}.png', bbox_inches='tight')
             plt.close()
 
+        # plot MSD computed by LAMMPS with all temperatures together
         fig, axs = plt.subplots(1, len(self.params['species']), figsize=(6*len(self.params['species']),7), sharey=True)
         axs: list[plt.Axes] = axs
-
         for spi, sp in enumerate(self.params['species']):
             for temp_i, temp in enumerate(self.sim_ids):
                 axs[spi].plot(x, self.data['msd'][temp_i, spi], label=f'{temp}K')
@@ -1472,21 +1502,23 @@ class PDM(Study):
         fig.savefig(self.dir / f'msd.png', bbox_inches='tight')
         plt.close()
 
+        # plot MSD computed internally for each temperature
         for temp_i, temp in enumerate(self.sim_ids):
             y = self.data['def_msd'][temp_i]
             yerr = (y - self.data['def_msd_std'][temp_i], y + self.data['def_msd_std'][temp_i])
             mask = self.data['def_msd_std'][temp_i] > 0
-            plt.plot(x[1:], y, color='tab:blue')
-            plt.fill_between(x[1:], yerr[0], yerr[1], alpha=0.5, color='tab:blue', where=mask)
+            plt.plot(x, y, color='tab:blue')
+            plt.fill_between(x, yerr[0], yerr[1], alpha=0.5, color='tab:blue', where=mask)
             plt.xlabel('Time [ns]')
             plt.ylabel(r'MSD [$\AA^2$]')
-            plt.savefig(self.dir / str(temp) / f'def_msd_{temp}.png', bbox_inches='tight')
+            plt.savefig(self.dir / str(temp) / f'{self.params['analysis']}_msd_{temp}.png', bbox_inches='tight')
             plt.close()
 
+        # plot MSD computed internally with all temperatures together
         for temp_i, temp in enumerate(self.sim_ids):
             y = self.data['def_msd'][temp_i]
             yerr = (y - self.data['def_msd_std'][temp_i], y + self.data['def_msd_std'][temp_i])
-            plt.plot(x[1:], y, color=colors[temp_i], label=f'{temp}K')
+            plt.plot(x, y, color=colors[temp_i], label=f'{temp}K')
             plt.xlabel('Time [ns]')
             plt.ylabel(r'MSD [$\AA^2$]')
             plt.legend()

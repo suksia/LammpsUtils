@@ -636,3 +636,11 @@ class LmpDump(LmpFile):
             for ati in range(frame['num_atoms']):
                 self.lines.append(f"{frame['id'][ati]} {frame['type'][ati]} {frame['position'][ati, 0]} {frame['position'][ati, 1]} {frame['position'][ati, 2]}\n")
         self.write_to_file(write_path)
+
+    def sort_by_id(self):
+        """Sorts id, type, and position arrays so that ids are sequential internally."""
+        for timestep, frame in self.frames.items():
+            order = np.argsort(frame['id'])
+            self.frames[timestep]['id'] = frame['id'][order]
+            self.frames[timestep]['type'] = frame['type'][order]
+            self.frames[timestep]['position'] = frame['position'][order]
