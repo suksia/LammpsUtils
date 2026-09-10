@@ -333,7 +333,7 @@ class LmpStructure(LmpFile):
             # rename last ID to removed atom ID so list will not be broken
             last_at_i = np.where(self.ids == len(self.ids)+1)[0][0]
             self.ids[last_at_i] = rem_at_id
-            pd_init_id.append(int(rem_at_id))
+            pd_init_id.append(len(self.ids)+1)
 
             self.num_atoms -= 1
             if len(set(self.types)) != self.num_types:
@@ -349,7 +349,7 @@ class LmpStructure(LmpFile):
             self.positions = np.append(self.positions, [int_pos], axis=0)
         
             self.num_atoms += 1
-            pd_init_id.append(int(self.num_atoms+1))
+            pd_init_id.append(int(self.num_atoms))
 
         # dumbbell -> move reference atom over and add atom on other side
         elif defect_type == 'db':
@@ -369,7 +369,7 @@ class LmpStructure(LmpFile):
             self.num_atoms += 1
 
             pd_init_id.append(int(self.ids[ref_pos_i]))
-            pd_init_id.append(int(self.num_atoms+1))
+            pd_init_id.append(int(self.num_atoms))
 
         # velocity set command in LAMMPS requires atom IDs to be sequential
         self.reorder_ids()

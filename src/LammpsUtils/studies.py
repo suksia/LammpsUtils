@@ -1243,6 +1243,7 @@ class PDM(Study):
                     pass
                 elif str(temp) in self.restart['diffusion'].keys():
                     if mem_i in self.restart['diffusion'][str(temp)]:
+                        self.state_params[temp][mem_i]['pd_init_id'] = self.restart['pd_init_id'][str(temp)][str(mem_i)]
                         continue
 
                 # insert point defect into reference and initialize quench.dump with reference (-1) and defective config (0)
@@ -1266,9 +1267,10 @@ class PDM(Study):
                 if self.params['def_type'] == 'vac':
                     rem_at_i = np.where(dump.frames[0]['id'] == self.state_params[temp][mem_i]['pd_init_id'][0])[0][0]
                     last_at_i = np.where(dump.frames[0]['id'] == dump.frames[0]['num_atoms'])[0][0]
-
                     dump.frames[0]['id'][[rem_at_i, last_at_i]] = dump.frames[0]['id'][[last_at_i, rem_at_i]]
-                    dump.frames[-1] = dump.frames.pop(0) # renumber to timestep -1
+
+                # renumber reference frame to timestep -1 
+                dump.frames[-1] = dump.frames.pop(0) 
 
                 dump.add_frame(config, 0)
                 dump.write_dump_file(self.state[temp][mem_i]['dir'] / 'quench.dump')
@@ -1452,13 +1454,13 @@ class PDM(Study):
                     box = quench_dump.frames[0]['box']
                     box_width = quench_dump.frames[0]['boxsize'][0]
                     pb_thresh = self.params['pb_thresh']*box_width
-                    mt_thresh = self.params['mt_thresh']*(product(frames[0]['boxsize']) / product(self.params['size']))**(1/3)
+                    mt_thresh = self.params['mt_thresh']*(product(quench_dump.frames[0]['boxsize']) / product(self.params['size']))**(1/3)
 
                     # vacancy -> removed atom in reference
-                    if self.params['def_type'] == 'vac':
+                    if self.params['defect'] == 'vac':
                         init_frame = -1
                     # interstitial -> interstitial atoms in first frame
-                    elif self.params['def_type'] == 'int':
+                    elif self.params['defect'] == 'int':
                         init_frame = 0
 
                     pd_init_ids = np.array(self.state_params[temp][mem_i]['pd_init_id'])
@@ -1493,17 +1495,17 @@ class PDM(Study):
                         mig_atoms = dist > mt_thresh
 
                         # vacancy -> previous position of atom that moved the most
-                        if self.params['def_type'] == 'vac':
+                        if self.params['defect'] == 'vac':
                             if np.sum(mig_atoms):
                                 vac_i = mig_atoms.argmax()
-                                all_types.append(np.array(prev_types[vac_i]))
-                                all_pos_unw.append(np.array(prev_pos[vac_i]))
+                                all_types.append(np.array([prev_types[vac_i]]))
+                                all_pos_unw.append(np.array([prev_pos[vac_i]]))
                             else:
                                 all_types.append(all_types[-1])
                                 all_pos_unw.append(all_pos_unw[-1])
 
                         # interstitial -> current position of two atoms that moved the most
-                        elif self.params['def_type'] == 'int':
+                        elif self.params['defect'] == 'int':
                             if np.sum(mig_atoms) >= 2:
                                 int_i = mig_atoms.argsort()[-2:]
                                 all_types.append(types[int_i])
@@ -1520,9 +1522,9 @@ class PDM(Study):
                         if frame_i == 0:
                             prev_pd_pos = np.mean(all_pos_unw[frame_i], axis=0)
 
-                        if self.params['def_type'] == 'vac':
+                        if self.params['defect'] == 'vac':
                             pbc_mask = np.ones(3)
-                        elif self.params['def_type'] == 'int':
+                        elif self.params['defect'] == 'int':
                             pbc_mask = np.ones((2,3))
 
                         while np.any(pbc_mask):
@@ -1534,7 +1536,7 @@ class PDM(Study):
 
                         pd_pos = np.mean(all_pos_unw[frame_i], axis=0)
 
-                        self.data['def_pos'][temp_i, mem_i, frame_i-1] = np.copy(pd_pos)
+                        self.data['def_pos'][temp_i, mem_i, frame_i] = np.copy(pd_pos)
                         prev_pd_pos = np.copy(pd_pos)
 
                     # step 4: write out dump file for visualization
@@ -1629,7 +1631,7 @@ class PDM(Study):
             plt.xlabel('Time [ns]')
             plt.ylabel(r'MSD [$\AA^2$]')
             plt.legend()
-        plt.savefig(self.dir / f'def_msd.png', bbox_inches='tight')
+        plt.savefig(self.dir / f"{self.params['analysis']}_msd.png", bbox_inches='tight')
         plt.close()
 
 @register_study
