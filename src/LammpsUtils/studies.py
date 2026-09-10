@@ -1242,7 +1242,7 @@ class PDM(Study):
                 if 'diffusion' not in self.restart.keys():
                     pass
                 elif str(temp) in self.restart['diffusion'].keys():
-                    if str(mem_i) in self.restart['diffusion'][str(temp)].keys():
+                    if mem_i in self.restart['diffusion'][str(temp)]:
                         continue
 
                 # insert point defect into reference and initialize quench.dump with reference (-1) and defective config (0)
@@ -1297,14 +1297,14 @@ class PDM(Study):
         self.data['msd_std'] = np.std(self.data['sd'], axis=1)
         
         # construct point defect trajectory
-        self.data['def_pos'] = np.zeros((len(self.sim_ids), self.input_yml['members'], self.params['num_snapshots'], 3))
-        self.data['def_sd'] = np.zeros((len(self.sim_ids), self.input_yml['members'], self.params['num_snapshots']))
+        self.data['def_pos'] = np.zeros((len(self.sim_ids), self.input_yml['members'], self.params['num_snapshots']+1, 3))
+        self.data['def_sd'] = np.zeros((len(self.sim_ids), self.input_yml['members'], self.params['num_snapshots']+1))
 
         for temp_i, temp in enumerate(self.sim_ids):
             for mem_i in range(self.input_yml['members']):
                 if self.params['analysis'] == 'ws':
                     # step 1: remove net lattice displacement manually
-                    quench_dump = LmpDump(file_path="quench.dump")
+                    quench_dump = LmpDump(file_path = self.state[temp][mem_i]['dir'] / "quench.dump")
                     quench_dump.sort_by_id()
 
                     box = quench_dump.frames[0]['box']
@@ -1339,10 +1339,10 @@ class PDM(Study):
 
                         quench_dump.frames[timestep]['position'] = np.copy(pos)
 
-                    quench_dump.write_dump_file(self.state[temp][mem_i]['dir'] / 'ws.dump')
+                    quench_dump.write_dump_file(self.state[temp][mem_i]['dir'] / "ws.dump")
 
                     # step 2: perform Wigner-Seitz analysis with OVITO                 
-                    pipeline = import_file('ws.dump')
+                    pipeline = import_file(self.state[temp][mem_i]['dir'] / "ws.dump")
                     ws = WignerSeitzAnalysisModifier()
                     pipeline.modifiers.append(ws)
     
@@ -1428,7 +1428,7 @@ class PDM(Study):
                     self.data['def_pos'][temp_i, mem_i] = mean_pos
 
                     # step 3: write out dump file for visualization
-                    with open(f"{self.state[temp][mem_i]['dir'] / self.params['analysis']}.dump", 'w') as f:
+                    with open(self.state[temp][mem_i]['dir'] / "cna.dump", 'w') as f:
                         for frame_i in range(self.params['num_snapshots']+1):
                             f.write("ITEM: TIMESTEP\n")
                             f.write(f"{frame_i*self.params['snapshot']}\n")
@@ -1442,10 +1442,117 @@ class PDM(Study):
                             for at_i in range(len(all_pos_unw[frame_i])):
                                 t = all_types[frame_i][at_i]
                                 p = all_pos_unw[frame_i][at_i]
-                                f.write(f"{at_i+1} {t} {p[0]} {p[1]} {p[2]}\n")
+                                f.write(f"{at_i+1} {t} {p[0]:8.4f} {p[1]:8.4f} {p[2]:8.4f}\n")
 
                 elif self.params['analysis'] == 'mt':
-                    raise NotImplementedError()
+                    # step 1: initialize point defect position
+                    quench_dump = LmpDump(file_path = self.state[temp][mem_i]['dir'] / "quench.dump")
+                    quench_dump.sort_by_id()
+
+                    box = quench_dump.frames[0]['box']
+                    box_width = quench_dump.frames[0]['boxsize'][0]
+                    pb_thresh = self.params['pb_thresh']*box_width
+                    mt_thresh = self.params['mt_thresh']*(product(frames[0]['boxsize']) / product(self.params['size']))**(1/3)
+
+                    # vacancy -> removed atom in reference
+                    if self.params['def_type'] == 'vac':
+                        init_frame = -1
+                    # interstitial -> interstitial atoms in first frame
+                    elif self.params['def_type'] == 'int':
+                        init_frame = 0
+
+                    pd_init_ids = np.array(self.state_params[temp][mem_i]['pd_init_id'])
+
+                    all_types = [quench_dump.frames[init_frame]['type'][pd_init_ids-1]]
+                    all_pos_unw = [quench_dump.frames[init_frame]['position'][pd_init_ids-1]]
+
+                    # step 2: obtain point defect trajectory by tracking largest displacements
+                    for frame_i, (timestep, frame) in enumerate(quench_dump.frames.items()):
+                        types = frame['type']
+                        pos = frame['position']
+
+                        # skip reference frame and first frame since no displacement occurs
+                        if frame_i == 0:
+                            continue
+                        if frame_i == 1:
+                            prev_types = np.copy(types)
+                            prev_pos = np.copy(pos)
+                            continue
+
+                        # unwrap any atoms which have jumped the boundary
+                        pos_unw = np.copy(pos)
+                        dr = pos_unw - prev_pos # displacement vector
+                        pbc_mask = (np.abs(dr) > pb_thresh).astype('uint8') # displacement exceeds boundary jump threshold
+                
+                        cross_dir = -np.sign(dr) # direction of jump is opposite of displacement vector
+                        pos_unw += cross_dir*pbc_mask*box_width # add a box width to large components of dr
+
+                        # filter atoms by displacement
+                        dr = pos_unw - prev_pos
+                        dist = np.linalg.norm(dr, axis=1)
+                        mig_atoms = dist > mt_thresh
+
+                        # vacancy -> previous position of atom that moved the most
+                        if self.params['def_type'] == 'vac':
+                            if np.sum(mig_atoms):
+                                vac_i = mig_atoms.argmax()
+                                all_types.append(np.array(prev_types[vac_i]))
+                                all_pos_unw.append(np.array(prev_pos[vac_i]))
+                            else:
+                                all_types.append(all_types[-1])
+                                all_pos_unw.append(all_pos_unw[-1])
+
+                        # interstitial -> current position of two atoms that moved the most
+                        elif self.params['def_type'] == 'int':
+                            if np.sum(mig_atoms) >= 2:
+                                int_i = mig_atoms.argsort()[-2:]
+                                all_types.append(types[int_i])
+                                all_pos_unw.append(pos_unw[int_i])
+                            else:
+                                all_types.append(all_types[-1])
+                                all_pos_unw.append(all_pos_unw[-1])
+
+                        prev_types = np.copy(types)
+                        prev_pos = np.copy(pos_unw)
+
+                    # step 3: unwrap point defect trajectory
+                    for frame_i in range(self.params['num_snapshots']+1):
+                        if frame_i == 0:
+                            prev_pd_pos = np.mean(all_pos_unw[frame_i], axis=0)
+
+                        if self.params['def_type'] == 'vac':
+                            pbc_mask = np.ones(3)
+                        elif self.params['def_type'] == 'int':
+                            pbc_mask = np.ones((2,3))
+
+                        while np.any(pbc_mask):
+                            dr = all_pos_unw[frame_i] - prev_pd_pos
+                            pbc_mask = (np.abs(dr) > pb_thresh).astype('uint8')
+
+                            cross_dir = -np.sign(dr)
+                            all_pos_unw[frame_i] += cross_dir*pbc_mask*box_width
+
+                        pd_pos = np.mean(all_pos_unw[frame_i], axis=0)
+
+                        self.data['def_pos'][temp_i, mem_i, frame_i-1] = np.copy(pd_pos)
+                        prev_pd_pos = np.copy(pd_pos)
+
+                    # step 4: write out dump file for visualization
+                    with open(self.state[temp][mem_i]['dir'] / "mt.dump", 'w') as f:
+                        for frame_i in range(self.params['num_snapshots']+1):
+                            f.write("ITEM: TIMESTEP\n")
+                            f.write(f"{frame_i*self.params['snapshot']}\n")
+                            f.write("ITEM: NUMBER OF ATOMS\n")
+                            f.write(f"{len(all_pos_unw[frame_i])}\n")
+                            f.write("ITEM: BOX BOUNDS pp pp pp\n")
+                            f.write(f"{box['xlo']} {box['xhi']}\n")
+                            f.write(f"{box['ylo']} {box['yhi']}\n")
+                            f.write(f"{box['zlo']} {box['zhi']}\n")
+                            f.write("ITEM: ATOMS id type x y z\n")
+                            for at_i in range(len(all_pos_unw[frame_i])):
+                                t = all_types[frame_i][at_i]
+                                p = all_pos_unw[frame_i][at_i]
+                                f.write(f"{at_i+1} {t} {p[0]:8.4f} {p[1]:8.4f} {p[2]:8.4f}\n")
 
                 # create dump of PD trajectory
                 with open(f"{self.state[temp][mem_i]['dir'] / self.params['analysis']}_traj.dump", 'w') as f:
@@ -1460,7 +1567,7 @@ class PDM(Study):
                         f.write(f"{box['ylo']} {box['yhi']}\n")
                         f.write(f"{box['zlo']} {box['zhi']}\n")
                         f.write("ITEM: ATOMS id type x y z\n")
-                        f.write(f"1 1 {pd_pos[0]} {pd_pos[1]} {pd_pos[2]}\n")
+                        f.write(f"1 1 {pd_pos[0]:8.4f} {pd_pos[1]:8.4f} {pd_pos[2]:8.4f}\n")
 
                 # compute SD for each member
                 self.data['def_sd'][temp_i, mem_i] = np.linalg.norm(self.data['def_pos'][temp_i, mem_i] - self.data['def_pos'][temp_i, mem_i, 0], axis=1)**2
@@ -1511,7 +1618,7 @@ class PDM(Study):
             plt.fill_between(x, yerr[0], yerr[1], alpha=0.5, color='tab:blue', where=mask)
             plt.xlabel('Time [ns]')
             plt.ylabel(r'MSD [$\AA^2$]')
-            plt.savefig(self.dir / str(temp) / f'{self.params['analysis']}_msd_{temp}.png', bbox_inches='tight')
+            plt.savefig(self.dir / str(temp) / f"{self.params['analysis']}_msd_{temp}.png", bbox_inches='tight')
             plt.close()
 
         # plot MSD computed internally with all temperatures together

@@ -333,7 +333,7 @@ class LmpStructure(LmpFile):
             # rename last ID to removed atom ID so list will not be broken
             last_at_i = np.where(self.ids == len(self.ids)+1)[0][0]
             self.ids[last_at_i] = rem_at_id
-            pd_init_id.append(len(self.ids)+1)
+            pd_init_id.append(int(rem_at_id))
 
             self.num_atoms -= 1
             if len(set(self.types)) != self.num_types:
@@ -634,7 +634,7 @@ class LmpDump(LmpFile):
             self.lines.append(f"{frame['box']['zlo']} {frame['box']['zhi']}\n")
             self.lines.append("ITEM: ATOMS id type x y z\n")
             for ati in range(frame['num_atoms']):
-                self.lines.append(f"{frame['id'][ati]} {frame['type'][ati]} {frame['position'][ati, 0]} {frame['position'][ati, 1]} {frame['position'][ati, 2]}\n")
+                self.lines.append(f"{frame['id'][ati]} {frame['type'][ati]} {frame['position'][ati, 0]:8.4f} {frame['position'][ati, 1]:8.4f} {frame['position'][ati, 2]:8.4f}\n")
         self.write_to_file(write_path)
 
     def sort_by_id(self):
