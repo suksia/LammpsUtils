@@ -1244,6 +1244,7 @@ class PDM(Study):
                 elif str(temp) in self.restart['diffusion'].keys():
                     if mem_i in self.restart['diffusion'][str(temp)]:
                         self.state_params[temp][mem_i]['pd_init_id'] = self.restart['pd_init_id'][str(temp)][str(mem_i)]
+                        logger.debug(f'LAMMPS has already been run for sim={temp} and member={mem_i}. Skipping it')
                         continue
 
                 # insert point defect into reference and initialize quench.dump with reference (-1) and defective config (0)
@@ -1279,6 +1280,12 @@ class PDM(Study):
                 self.state[temp][mem_i]['status'] = 0
 
         logger.debug(f'Running diffusion loop...')
+        if 'diffusion' in self.restart.keys():
+            for temp in self.sim_ids:
+                for mem_i in range(self.input_yml['members']):
+                    if str(temp) in self.restart['diffusion'].keys():
+                        if mem_i in self.restart['diffusion'][str(temp)]:
+                            logger.debug(f'LAMMPS has already been run for sim={temp} and member={mem_i}. Skipping it')
         super().run_lammps(lmp_fn='diffusion.in', restart_name='diffusion')
     
     def analyze(self):
@@ -1290,9 +1297,9 @@ class PDM(Study):
                 dif_log = LmpLog(file_path = self.state[temp][mem_i]['dir'] / 'diffusion.log')
 
                 for spi in range(1, len(self.params['species'])+1):
-                    self.data['sd'][temp_i, mem_i, spi-1, :] = dif_log.data_df[f'c_msd{spi}[4]']
+                    self.data['sd'][temp_i, mem_i, spi-1, :] = dif_log.data_df[f'c_msd{spi}[4]'][:self.params['num_snapshots']+1]
 
-        self.data['timesteps'] = dif_log.data_df.index.to_numpy()
+        self.data['timesteps'] = dif_log.data_df.index.to_numpy()[:self.params['num_snapshots']+1]
         self.data['time'] = self.data['timesteps']*self.params['timestep']
 
         self.data['msd'] = np.mean(self.data['sd'], axis=1)
@@ -1385,6 +1392,7 @@ class PDM(Study):
                 elif self.params['analysis'] == 'cna':
                     # step 1: perform a common neighbor analysis with OVITO
                     pipeline = import_file(self.state[temp][mem_i]['dir'] / 'quench.dump')
+                    logger.debug(f"OVITO: read lines from {self.state[temp][mem_i]['dir'] / 'quench.dump'}")
 
                     cna = CommonNeighborAnalysisModifier()
                     pipeline.modifiers.append(cna)
@@ -1608,8 +1616,28 @@ class PDM(Study):
             axs[spi].set_title(sp)
             axs[spi].legend()
         axs[0].set_ylabel(r'MSD [$\AA^2$]')
-        fig.savefig(self.dir / f'msd.png', bbox_inches='tight')
+        fig.savefig(self.dir / 'msd.png', bbox_inches='tight')
         plt.close()
+
+        # write out MSD computed by LAMMPS
+        with open(self.dir / 'msd.data', 'w') as f:
+            for temp_i, temp in enumerate(self.sim_ids):
+                f.write(f'Temperature: {temp}\n\n')
+
+                header_line = f' '*11
+                for spi, sp in enumerate(self.params['species']):
+                    header_line += f"{f'{sp}':<20} "
+                f.write(header_line + '\n')
+
+                for step_i in range(len(self.data['timesteps'])):
+                    next_line = f"{self.data['timesteps'][step_i]:<20} "
+
+                    for spi in range(len(self.params['species'])+1):
+                        next_line += f"{self.data['msd'][temp_i, spi, step_i]:<10.5f} {self.data['msd_std'][temp_i, spi, step_i]:<10.5f} "
+
+                    f.write(next_line + '\n')
+                
+                f.write('\n\n')
 
         # plot MSD computed internally for each temperature
         for temp_i, temp in enumerate(self.sim_ids):
@@ -1633,6 +1661,15 @@ class PDM(Study):
             plt.legend()
         plt.savefig(self.dir / f"{self.params['analysis']}_msd.png", bbox_inches='tight')
         plt.close()
+
+        # write out MSD computed internally
+        with open(self.dir / f"{self.params['analysis']}_msd.data", 'w') as f:
+            for temp_i, temp in enumerate(self.sim_ids):
+                f.write(f'Temperature: {temp}\n\n')
+                for step_i in range(len(self.data['timesteps'])):
+                    next_line = f"{self.data['timesteps'][step_i]:<20} {self.data['def_msd'][temp_i, step_i]:<10.5f} {self.data['def_msd_std'][temp_i, step_i]:<10.5f}\n"
+                    f.write(next_line)
+                f.write('\n\n')
 
 @register_study
 class CC(Study):
